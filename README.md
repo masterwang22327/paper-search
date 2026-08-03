@@ -30,7 +30,7 @@ YOLO 模式 Codex CLI，按一次 Enter。
 ```bash
 git clone https://github.com/masterwang22327/paper-search.git
 cd paper-search
-python3 -m pip install -e '.[validation]'
+python3 -m pip install 'PyYAML>=6.0' 'jsonschema>=4.0'
 ```
 
 ## 一次启动
