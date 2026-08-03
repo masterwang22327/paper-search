@@ -1,0 +1,95 @@
+id: arxiv_2402.03300
+arxiv_id: "2402.03300"
+title: "DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models"
+authors:
+  - Zhihong Shao
+  - Peiyi Wang
+  - Qihao Zhu
+  - Runxin Xu
+  - Junxiao Song
+  - Xiao Bi
+  - Haowei Zhang
+  - Mingchuan Zhang
+  - Y.K. Li
+  - Y. Wu
+  - Daya Guo
+year: 2024
+venue: arXiv
+status: preprint
+version: v3
+published_at: "2024-02-05"
+updated_at: "2024-04-27"
+version_history:
+  - version: v1
+    submitted_at: "2024-02-05T18:55:32Z"
+  - version: v2
+    submitted_at: "2024-02-06T18:39:38Z"
+  - version: v3
+    submitted_at: "2024-04-27T15:25:53Z"
+retrieved_at: "2026-07-15"
+urls:
+  abstract: "https://arxiv.org/abs/2402.03300"
+  pdf: "https://arxiv.org/pdf/2402.03300"
+  versioned_abstract: "https://arxiv.org/abs/2402.03300v3"
+  versioned_pdf: "https://arxiv.org/pdf/2402.03300v3"
+  code: "https://github.com/deepseek-ai/DeepSeek-Math"
+artifacts:
+  code:
+    status: verified
+    url: "https://github.com/deepseek-ai/DeepSeek-Math"
+    commit_or_tag: "b8b0f8ce093d80bf8e9a641e44142f06d092c305"
+    license: "MIT"
+    contents_note: "Inference and evaluation code/data/results are present; GRPO, SFT, pretraining, and reward-model training code are not found in this bounded check. No repository tag was found."
+  weights:
+    status: verified
+    url: "https://huggingface.co/deepseek-ai/deepseek-math-7b-rl"
+    license: "DeepSeek License Agreement v1.0"
+    revisions:
+      base: "036a8c6189aac6e2fc4e07b46e1e57c6b647bca5"
+      instruct: "0a5828f800a36df0fd7f0ed581b983246c0677ff"
+      rl: "f3cd419a172ff5a100e9a563ebfe7900d78e9740"
+  model_card:
+    status: verified
+    url: "https://huggingface.co/deepseek-ai/deepseek-math-7b-rl"
+  data:
+    status: not_found
+    url: "https://github.com/deepseek-ai/DeepSeek-Math/tree/b8b0f8ce093d80bf8e9a641e44142f06d092c305/evaluation/datasets"
+    license: "Training-corpus/RL-data license not found; model license explicitly excludes Data. Benchmark licenses require per-source checking."
+    note: "Evaluation datasets are present; the 120B-token corpus, 144K RL prompts, and reward-model training data were not found."
+  demo:
+    status: not_found
+    url: ""
+  community_reproductions:
+    - name: ms-swift
+      status: community_implementation
+      url: "https://github.com/modelscope/ms-swift"
+      version: "v4.4.1"
+      commit: "98a09c18cdf95ff07051324b9b8cc90f5184b24b"
+      license: "Apache-2.0"
+      checked_at: "2026-07-15"
+      verification: "Source audit of the HF trainer objective path only; no training run. This is not a DeepSeek official reproduction."
+  checked_at: "2026-07-15"
+topics:
+  - grpo
+  - mathematical_reasoning
+  - reasoning_rl
+paper_type: representative_method
+priority: P0
+quality_score: 88
+reading_status: screened
+related_papers: []
+design_defect_fix_status: baseline_framework_mapping_complete
+notes_language: zh-CN
+source:
+  name: arXiv
+  official: true
+  evidence_url: "https://arxiv.org/abs/2402.03300"
+  evidence_checked: "title, authors, version history, official v3 PDF abstract, introduction, Figure 1, Sections 4.1-4.2, Eq.3-4, Algorithm 1, Table 5, Section 5.2, Table 10, Figures 5-7, conclusion, Appendix A.1.6; author-linked GitHub, model cards, licenses; ms-swift v4.4.1 HF GRPO objective source path and docs"
+  note: "Bounded initial screening plus a pinned Eq.3-to-ms-swift source mapping, not a full paper review or training reproduction. See screening.md and framework_mapping_ms_swift.md for exact evidence boundaries."
+local_source:
+  pdf: "source/arxiv_2402.03300v3.pdf"
+  extracted_text: "source/arxiv_2402.03300v3.txt"
+  pdf_sha256: "6cc20b3c5b8d25b8b53868fc4ec1792c144f07d67bdf7395138efd4422197e7b"
+local_notes:
+  screening: "screening.md"
+  framework_mapping: "framework_mapping_ms_swift.md"

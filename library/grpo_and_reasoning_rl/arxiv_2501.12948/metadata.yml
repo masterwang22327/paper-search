@@ -1,0 +1,39 @@
+id: arxiv_2501.12948
+arxiv_id: "2501.12948"
+doi: "10.1038/s41586-025-09422-z"
+title: "DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning"
+authors: [DeepSeek-AI, Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, "et al."]
+year: 2025
+venue: Nature
+status: journal_article
+version: v2
+published_at: "2025-01-22"
+updated_at: "2026-01-04"
+retrieved_at: "2026-07-15"
+urls:
+  abstract: "https://arxiv.org/abs/2501.12948v2"
+  pdf: "https://arxiv.org/pdf/2501.12948v2"
+  doi: "https://doi.org/10.1038/s41586-025-09422-z"
+  weights: "https://huggingface.co/deepseek-ai"
+topics: [deepseek_r1, grpo, rlvr, reasoning_rl]
+paper_type: representative_method
+priority: P0
+quality_score: null
+reading_status: candidate
+related_papers: [arxiv_2402.03300, arxiv_2503.20783]
+artifacts:
+  weights:
+    status: author_linked
+    url: "https://huggingface.co/deepseek-ai"
+    verification_note: "Author-linked but not independently verified in this bounded check."
+  code: {status: not_checked}
+  data: {status: not_checked}
+  checked_at: null
+source:
+  name: arXiv and DOI metadata
+  official: true
+  evidence_checked: "official v2 metadata; PDF abstract and GRPO method passage only"
+local_source:
+  pdf: "source/arxiv_2501.12948v2.pdf"
+  extracted_text: "source/arxiv_2501.12948v2.txt"
+  pdf_sha256: "b191b0a365a64b4ab2791d117069ed17a2933d03554a662ced58b37df52018f4"

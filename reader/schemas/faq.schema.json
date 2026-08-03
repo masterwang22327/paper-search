@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["items"],
+  "properties": {
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["question", "answer", "visualization", "evidence", "knowledge_type"],
+        "properties": {
+          "question": {"type": "string", "minLength": 4, "maxLength": 300},
+          "answer": {"type": "string", "minLength": 10, "maxLength": 5000},
+          "visualization": {
+            "anyOf": [
+              {"type": "null"},
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["title", "nodes", "edges", "caption"],
+                "properties": {
+                  "title": {"type": "string", "minLength": 1, "maxLength": 120},
+                  "caption": {"type": "string", "maxLength": 500},
+                  "nodes": {
+                    "type": "array", "minItems": 2, "maxItems": 12,
+                    "items": {
+                      "type": "object", "additionalProperties": false,
+                      "required": ["id", "label", "detail"],
+                      "properties": {
+                        "id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,40}$"},
+                        "label": {"type": "string", "minLength": 1, "maxLength": 80},
+                        "detail": {"type": "string", "maxLength": 200}
+                      }
+                    }
+                  },
+                  "edges": {
+                    "type": "array", "minItems": 1, "maxItems": 20,
+                    "items": {
+                      "type": "object", "additionalProperties": false,
+                      "required": ["from", "to", "label"],
+                      "properties": {
+                        "from": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,40}$"},
+                        "to": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,40}$"},
+                        "label": {"type": "string", "maxLength": 80}
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "knowledge_type": {
+            "type": "string",
+            "enum": ["source_fact", "engineering_explanation", "mixed", "uncertain"]
+          },
+          "evidence": {
+            "type": "array",
+            "maxItems": 12,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["source_id", "page"],
+              "properties": {
+                "source_id": {"type": "string", "minLength": 1, "maxLength": 128},
+                "page": {"type": "integer", "minimum": 1}
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

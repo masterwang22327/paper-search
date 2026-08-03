@@ -1,0 +1,36 @@
+id: arxiv_2507.18071
+arxiv_id: "2507.18071"
+title: "Group Sequence Policy Optimization"
+authors: [Chujie Zheng, Shixuan Liu, Mingze Li, Xiong-Hui Chen, Bowen Yu, Chang Gao, Kai Dang, Yuqiong Liu, Rui Men, An Yang, Jingren Zhou, Junyang Lin]
+year: 2025
+venue: arXiv
+status: preprint
+version: v2
+published_at: "2025-07-24"
+updated_at: "2025-07-28"
+retrieved_at: "2026-07-15"
+urls:
+  abstract: "https://arxiv.org/abs/2507.18071v2"
+  pdf: "https://arxiv.org/pdf/2507.18071v2"
+topics: [gspo, grpo, qwen, alibaba, moe]
+paper_type: correction_variant
+priority: P0
+quality_score: null
+reading_status: screened
+related_papers: [arxiv_2402.03300, arxiv_2503.14476, arxiv_2511.20347]
+artifacts:
+  code:
+    status: not_found
+    search_boundary: "Not found during the recorded bounded check; this is not a claim of nonexistence."
+  weights: {status: not_checked}
+  data: {status: not_checked}
+  license: {status: not_checked}
+  checked_at: "2026-07-15"
+source:
+  name: arXiv
+  official: true
+  evidence_checked: "official v2 metadata; PDF Sections 2-5, Eq.2-17 and Figures 1-2"
+local_source:
+  pdf: "source/arxiv_2507.18071v2.pdf"
+  extracted_text: "source/arxiv_2507.18071v2.txt"
+  pdf_sha256: "67221ec313f42d8b3029686b604b2621a311ae0d74e38524092e7c7a94613bd0"

@@ -1,0 +1,6 @@
+# Optional, reader-only corrections for citations that cannot be resolved safely
+# from the original Markdown. Occurrence is 1-based among exact citation texts
+# within one paper review. Keep this file empty unless the fixed PDF/page has
+# been manually verified.
+overrides: []
+

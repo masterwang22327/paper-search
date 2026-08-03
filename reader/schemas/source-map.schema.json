@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["source_id", "pdf_sha256", "page_count", "protocol_version", "source_map_version", "pages", "glossary"],
+  "properties": {
+    "source_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "pdf_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "page_count": {"type": "integer", "minimum": 1},
+    "protocol_version": {"type": "string", "const": "paper-reader-translation-v1"},
+    "source_map_version": {"type": "string", "const": "paper-reader-source-map-v1"},
+    "updated_at": {"type": "string"},
+    "pages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["physical_page", "source_text_sha256", "blocks", "warnings"],
+        "properties": {
+          "physical_page": {"type": "integer", "minimum": 1},
+          "source_text_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+          "translated_at": {"type": "string"},
+          "blocks": {"type": "array", "minItems": 1, "maxItems": 160, "items": {"$ref": "#/$defs/block"}},
+          "warnings": {"type": "array", "maxItems": 20, "items": {"type": "string", "maxLength": 1000}}
+        }
+      }
+    },
+    "glossary": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["term", "translation", "locked"],
+        "properties": {
+          "term": {"type": "string", "minLength": 1, "maxLength": 200},
+          "translation": {"type": "string", "minLength": 1, "maxLength": 200},
+          "locked": {"type": "boolean"},
+          "first_page": {"type": ["integer", "null"], "minimum": 1}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "block": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "physical_page", "type", "order", "original_text", "translation", "confidence", "bbox", "refs"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^p[0-9]{4}-(b|c|f|t)[0-9]{3}$"},
+        "physical_page": {"type": "integer", "minimum": 1},
+        "type": {"type": "string"},
+        "order": {"type": "integer", "minimum": 1},
+        "original_text": {"type": "string", "maxLength": 30000},
+        "translation": {"type": "string", "minLength": 1, "maxLength": 30000},
+        "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+        "bbox": {"type": ["array", "null"], "minItems": 4, "maxItems": 4, "items": {"type": "number"}},
+        "refs": {"type": "array", "maxItems": 20, "items": {"type": "string", "maxLength": 200}},
+        "table_data": {"$ref": "#/$defs/table_data"},
+        "figure_data": {"$ref": "#/$defs/figure_data"}
+      }
+    },
+    "table_data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["headers", "rows", "notes"],
+      "properties": {
+        "headers": {"type": "array", "minItems": 1, "maxItems": 30, "items": {"type": "string", "maxLength": 500}},
+        "rows": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 200,
+          "items": {"type": "array", "minItems": 1, "maxItems": 30, "items": {"type": "string", "maxLength": 2000}}
+        },
+        "notes": {"type": "array", "maxItems": 10, "items": {"type": "string", "maxLength": 1000}}
+      }
+    },
+    "figure_data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "summary", "labels", "flow_steps", "notes"],
+      "properties": {
+        "kind": {"type": "string", "enum": ["diagram", "chart", "illustration", "photo", "other"]},
+        "summary": {"type": "string", "minLength": 1, "maxLength": 4000},
+        "labels": {
+          "type": "array",
+          "maxItems": 80,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["original", "translation"],
+            "properties": {
+              "original": {"type": "string", "minLength": 1, "maxLength": 500},
+              "translation": {"type": "string", "minLength": 1, "maxLength": 500}
+            }
+          }
+        },
+        "flow_steps": {"type": "array", "maxItems": 40, "items": {"type": "string", "minLength": 1, "maxLength": 1000}},
+        "notes": {"type": "array", "maxItems": 10, "items": {"type": "string", "maxLength": 1000}}
+      }
+    }
+  }
+}

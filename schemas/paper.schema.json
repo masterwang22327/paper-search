@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Paper Search Canonical Paper Record",
+  "type": "object",
+  "required": ["id", "title", "year", "status", "reading_status", "source"],
+  "properties": {
+    "id": {"type": "string", "description": "Stable paper identifier."},
+    "title": {"type": "string", "minLength": 1},
+    "year": {"type": "integer", "minimum": 1900},
+    "status": {
+      "type": "string",
+      "enum": ["preprint", "conference_paper", "journal_article", "technical_report", "other"]
+    },
+    "reading_status": {
+      "type": "string",
+      "enum": ["candidate", "screened", "reading", "reviewed", "archived"]
+    },
+    "source": {
+      "type": "object",
+      "required": ["official"],
+      "properties": {
+        "official": {"type": "boolean"},
+        "evidence_checked": {"type": "string"}
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "properties": {
+        "code": {"$ref": "#/$defs/artifact"},
+        "weights": {"$ref": "#/$defs/artifact"},
+        "data": {"$ref": "#/$defs/artifact"},
+        "model_card": {"$ref": "#/$defs/artifact"},
+        "demo": {"$ref": "#/$defs/artifact"}
+      }
+    }
+  },
+  "$defs": {
+    "artifact": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["verified", "author_linked", "author_claimed", "community_implementation", "not_found", "not_released", "not_checked", "not_applicable"]
+        },
+        "url": {"type": "string"},
+        "commit_or_tag": {"type": "string"},
+        "license": {"type": "string"}
+      }
+    }
+  }
+}

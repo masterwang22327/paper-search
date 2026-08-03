@@ -1,0 +1,26 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local credentials and machine-specific configuration must never enter Git.
+.env
+.env.*
+!.env.example
+**/auth.json
+**/credentials.json
+**/credentials.*.json
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Left over from the legacy Runner; it is archived and must not return here.
+.research_*
+
+# Task workspaces are durable local research artifacts, not source code.
+tasks/*
+!tasks/.gitkeep
+*.lock

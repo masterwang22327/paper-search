@@ -1,0 +1,13 @@
+[project]
+name = "paper-search"
+version = "0.2.0"
+description = "Goal-driven Codex workspace for long-running evidence-backed paper research"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+validation = ["PyYAML>=6.0", "jsonschema>=4.0"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

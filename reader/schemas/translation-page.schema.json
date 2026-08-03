@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["translation", "blocks", "glossary_updates", "warnings"],
+  "properties": {
+    "translation": {"type": "string", "minLength": 1, "maxLength": 30000},
+    "blocks": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 160,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "original_text", "translation", "confidence", "bbox", "refs", "table_data", "figure_data"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["heading", "paragraph", "caption", "figure", "table", "table_row", "equation", "footnote", "reference", "other"]
+          },
+          "original_text": {"type": "string", "maxLength": 30000},
+          "translation": {"type": "string", "minLength": 1, "maxLength": 30000},
+          "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+          "bbox": {
+            "type": ["array", "null"],
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {"type": "number"}
+          },
+          "refs": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {"type": "string", "maxLength": 200}
+          },
+          "table_data": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "required": ["headers", "rows", "notes"],
+            "properties": {
+              "headers": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 30,
+                "items": {"type": "string", "maxLength": 500}
+              },
+              "rows": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 200,
+                "items": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 30,
+                  "items": {"type": "string", "maxLength": 2000}
+                }
+              },
+              "notes": {
+                "type": "array",
+                "maxItems": 10,
+                "items": {"type": "string", "maxLength": 1000}
+              }
+            }
+          },
+          "figure_data": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "required": ["kind", "summary", "labels", "flow_steps", "notes"],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": ["diagram", "chart", "illustration", "photo", "other"]
+              },
+              "summary": {"type": "string", "minLength": 1, "maxLength": 4000},
+              "labels": {
+                "type": "array",
+                "maxItems": 80,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["original", "translation"],
+                  "properties": {
+                    "original": {"type": "string", "minLength": 1, "maxLength": 500},
+                    "translation": {"type": "string", "minLength": 1, "maxLength": 500}
+                  }
+                }
+              },
+              "flow_steps": {
+                "type": "array",
+                "maxItems": 40,
+                "items": {"type": "string", "minLength": 1, "maxLength": 1000}
+              },
+              "notes": {
+                "type": "array",
+                "maxItems": 10,
+                "items": {"type": "string", "maxLength": 1000}
+              }
+            }
+          }
+        }
+      }
+    },
+    "glossary_updates": {
+      "type": "array",
+      "maxItems": 40,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["term", "translation"],
+        "properties": {
+          "term": {"type": "string", "minLength": 1, "maxLength": 200},
+          "translation": {"type": "string", "minLength": 1, "maxLength": 200}
+        }
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {"type": "string", "minLength": 1, "maxLength": 1000}
+    }
+  }
+}

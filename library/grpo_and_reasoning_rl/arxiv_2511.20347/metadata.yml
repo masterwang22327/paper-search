@@ -1,0 +1,36 @@
+id: arxiv_2511.20347
+arxiv_id: "2511.20347"
+title: "Soft Adaptive Policy Optimization"
+authors: [Chang Gao, Chujie Zheng, Xiong-Hui Chen, Kai Dang, Shixuan Liu, Bowen Yu, An Yang, Shuai Bai, Jingren Zhou, Junyang Lin]
+year: 2025
+venue: arXiv
+status: preprint
+version: v2
+published_at: "2025-11-25"
+updated_at: "2025-12-01"
+retrieved_at: "2026-07-15"
+urls:
+  abstract: "https://arxiv.org/abs/2511.20347v2"
+  pdf: "https://arxiv.org/pdf/2511.20347v2"
+topics: [sapo, gspo, grpo, qwen, alibaba]
+paper_type: correction_variant
+priority: P1
+quality_score: null
+reading_status: screened
+related_papers: [arxiv_2402.03300, arxiv_2507.18071]
+artifacts:
+  code:
+    status: not_found
+    search_boundary: "Not found during the recorded bounded check; this is not a claim of nonexistence."
+  weights: {status: not_checked}
+  data: {status: not_checked}
+  license: {status: not_checked}
+  checked_at: "2026-07-15"
+source:
+  name: arXiv
+  official: true
+  evidence_checked: "official v2 metadata; PDF Sections 3-5, Eq.5-8 and Figures 4-6"
+local_source:
+  pdf: "source/arxiv_2511.20347v2.pdf"
+  extracted_text: "source/arxiv_2511.20347v2.txt"
+  pdf_sha256: "a413610718e93f3519de9ce3cf31511ec07a283784d8fb68b3d61b9891efdd0f"

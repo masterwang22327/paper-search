@@ -1,0 +1,41 @@
+id: arxiv_2503.14476
+arxiv_id: "2503.14476"
+title: "DAPO: An Open-Source LLM Reinforcement Learning System at Scale"
+authors: [Qiying Yu, Zheng Zhang, Ruofei Zhu, Yufeng Yuan, Xiaochen Zuo, "et al."]
+year: 2025
+venue: arXiv
+status: preprint
+version: v2
+published_at: "2025-03-18"
+updated_at: "2025-05-20"
+retrieved_at: "2026-07-15"
+urls:
+  abstract: "https://arxiv.org/abs/2503.14476v2"
+  pdf: "https://arxiv.org/pdf/2503.14476v2"
+  project: "https://dapo-sia.github.io/"
+  code: "https://github.com/volcengine/verl"
+topics: [dapo, grpo, rlvr, reasoning_rl, bytedance]
+paper_type: system_and_correction
+priority: P0
+quality_score: null
+reading_status: screened
+related_papers: [arxiv_2402.03300, arxiv_2501.12948, arxiv_2503.20783]
+artifacts:
+  code:
+    status: author_linked
+    url: "https://github.com/volcengine/verl"
+    verification_note: "Author-linked but not independently verified in this bounded check."
+  data:
+    status: author_claimed
+    verification_note: "The paper claims openness; a public release was not independently verified."
+  weights: {status: not_checked}
+  license: {status: not_checked}
+  checked_at: "2026-07-15"
+source:
+  name: arXiv
+  official: true
+  evidence_checked: "official v2 metadata; PDF Sections 2.3-4.2, Eq.8-12, Figures 2-6 and Table 1"
+local_source:
+  pdf: "source/arxiv_2503.14476v2.pdf"
+  extracted_text: "source/arxiv_2503.14476v2.txt"
+  pdf_sha256: "f01e4fd347530cadd68e5c36b1998532a6d1adb272c817e73b927453c26e9d79"

@@ -1,0 +1,85 @@
+site_name: LLM 基础论文研究手册
+site_description: 面向工程型算法工程师的 LLM 基础论文、机制谱系与证据目录
+site_dir: site
+docs_dir: docs
+use_directory_urls: true
+strict: true
+hooks:
+  - hooks.py
+
+theme:
+  name: material
+  language: zh
+  font: false
+  features:
+    - navigation.instant
+    - navigation.instant.progress
+    - navigation.sections
+    - navigation.top
+    - navigation.tracking
+    - search.highlight
+    - search.share
+    - search.suggest
+    - toc.follow
+    - content.code.copy
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: deep purple
+      toggle:
+        icon: material/brightness-7
+        name: 切换到深色模式
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: deep purple
+      toggle:
+        icon: material/brightness-4
+        name: 切换到浅色模式
+
+plugins:
+  - search:
+      lang:
+        - zh
+        - en
+  - literate-nav:
+      nav_file: SUMMARY.md
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      toc_depth: 3
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+
+extra_css:
+  - stylesheets/extra.css?v=20260803-2
+  - stylesheets/knowledge-assistant.css?v=20260803-1
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - javascripts/evidence-panel.js?v=20260803-1
+  - javascripts/knowledge-assistant.js?v=20260803-1
+  - javascripts/reader-layout.js?v=20260723-1
+  - vendor/mathjax/tex-mml-chtml.js
+
+extra:
+  generator: false
+
+copyright: 本站由原始调研 Markdown 自动生成；tasks 目录始终是唯一事实来源。

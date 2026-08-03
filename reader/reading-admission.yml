@@ -1,0 +1,16 @@
+# Reader admission is deliberately separate from the research-paper inventory.
+# Files listed here remain discoverable as generated candidate pages, but they do
+# not receive a canonical reading-card/route position until a human admission
+# decision is recorded.
+version: 1
+canonical_count: 56
+candidates:
+  - file: agentic-rl-next-directions.md
+    reason: "方向发现页；它汇总候选问题，但不是一篇完成来源准入的精读。"
+    next_action: "选定具体候选后固定原文、版本和实验合同，再决定进入专题或独立页面。"
+  - file: environment-evolution-echoverse-change2task.md
+    reason: "环境共演与任务生成仍是候选分支；当前页用于证据发现，不计入主学习顺序。"
+    next_action: "补齐 component-only 因果对照与 OOD/真实环境边界后复审。"
+  - file: memory-security-skillrise.md
+    reason: "跨 episode memory、containment 与 skill 页包含多个新对象，当前先保持候选可发现性。"
+    next_action: "分别核对长期 state、授权效用和安全分量后决定拆页或纳入 Agentic RL 路线。"

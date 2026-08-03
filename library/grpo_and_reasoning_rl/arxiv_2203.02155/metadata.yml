@@ -1,0 +1,34 @@
+id: arxiv_2203.02155
+arxiv_id: "2203.02155"
+title: "Training language models to follow instructions with human feedback"
+authors: [Long Ouyang, Jeff Wu, Xu Jiang, Diogo Almeida, Carroll L. Wainwright, "et al."]
+year: 2022
+venue: arXiv
+status: preprint
+version: v1
+published_at: "2022-03-04"
+updated_at: "2022-03-04"
+retrieved_at: "2026-07-15"
+urls:
+  abstract: "https://arxiv.org/abs/2203.02155v1"
+  pdf: "https://arxiv.org/pdf/2203.02155v1"
+topics: [rlhf, ppo, reward_model]
+paper_type: representative_method
+priority: P0
+quality_score: null
+reading_status: candidate
+related_papers: [arxiv_1707.06347, arxiv_2402.03300]
+artifacts:
+  code: {status: not_checked}
+  weights: {status: not_checked}
+  data: {status: not_checked}
+  checked_at: null
+source:
+  name: arXiv
+  official: true
+  evidence_checked: "official v1 metadata; PDF abstract, Introduction and Figure 2 pipeline only"
+local_source:
+  pdf: "source/arxiv_2203.02155v1.pdf"
+  extracted_text: "source/arxiv_2203.02155v1.txt"
+  pdf_sha256: "c1984bb50a5b90fddb895fdc3a0f72e5bc977148c9f63ef6040cbe7a3e1f0d98"
+

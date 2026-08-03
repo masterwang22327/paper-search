@@ -1,0 +1,4 @@
+interface:
+  display_name: "论文阅读翻译"
+  short_description: "按固定 PDF 页面生成可核对、可缓存的结构化双语译文"
+  default_prompt: "Use $paper-reader-translation to translate the current academic PDF page into verifiable Simplified Chinese."

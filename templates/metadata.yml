@@ -1,0 +1,49 @@
+id: ""
+title: ""
+authors: []
+year: null
+venue: ""
+status: ""
+version: ""
+published_at: ""
+updated_at: ""
+retrieved_at: ""
+urls:
+  abstract: ""
+  pdf: ""
+  code: ""
+source:
+  official: false
+  name: ""
+  evidence_checked: ""
+  evidence_url: ""
+artifacts:
+  code:
+    status: not_checked
+    url: ""
+    commit_or_tag: ""
+    license: ""
+  weights:
+    status: not_checked
+    url: ""
+    license: ""
+  model_card:
+    status: not_checked
+    url: ""
+  data:
+    status: not_checked
+    url: ""
+    license: ""
+  demo:
+    status: not_checked
+    url: ""
+  community_reproductions: []
+  checked_at: null
+topics: []
+paper_type: ""
+priority: ""
+quality_score: null
+reading_status: candidate
+related_papers: []
+design_defect_fix_status: not_started
+notes_language: zh-CN

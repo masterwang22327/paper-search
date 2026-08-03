@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>论文 PDF</title>
+    <link rel="stylesheet" href="viewer.css">
+  </head>
+  <body>
+    <header class="toolbar" aria-label="PDF 工具栏">
+      <div class="toolbar-group page-tools">
+        <button id="previous" class="page-step" type="button" title="上一页" aria-label="上一页">←</button>
+        <label class="page-control">
+          <span class="visually-hidden">当前页</span>
+          <span aria-hidden="true">第</span>
+          <input id="page-number" type="number" min="1" value="1" inputmode="numeric">
+          <span>/ <span id="page-count">-</span> 页</span>
+        </label>
+        <button id="next" class="page-step" type="button" title="下一页" aria-label="下一页">→</button>
+      </div>
+      <span class="divider"></span>
+      <div class="toolbar-group zoom-tools">
+        <button id="zoom-out" type="button" title="缩小" aria-label="缩小">−</button>
+        <button id="fit-width" type="button" title="适合宽度">适宽</button>
+        <button id="zoom-in" type="button" title="放大" aria-label="放大">＋</button>
+        <span id="zoom-label" class="zoom-label">100%</span>
+      </div>
+      <span class="divider"></span>
+      <div class="toolbar-group translation-tools">
+        <button id="translate-page" type="button" class="translation-action" title="使用页面文本和整页图像翻译当前 PDF 页">翻译当前页</button>
+        <button id="translate-all" type="button" class="translation-all-action" title="在本地后台按顺序翻译所有未缓存页面；离开当前文档后仍会继续">翻译全文</button>
+        <span id="full-translation-progress" class="full-translation-progress" aria-live="polite" hidden></span>
+      </div>
+      <span class="toolbar-spacer"></span>
+      <a id="open-original" target="_blank" rel="noopener">原始 PDF</a>
+    </header>
+    <div id="workspace" class="workspace">
+      <main id="viewport" class="viewport">
+        <div id="status" class="status">正在载入 PDF…</div>
+        <div id="pages" class="pages" aria-label="PDF 连续页面"></div>
+      </main>
+      <button id="translation-resizer" class="translation-resizer" type="button" role="separator" aria-label="拖动调整原文 PDF 与中文译文宽度；双击恢复默认" aria-orientation="vertical" hidden></button>
+      <section id="translation-panel" class="translation-panel" aria-label="当前 PDF 页译文" hidden>
+        <header class="translation-header">
+          <div class="translation-identity">
+            <strong id="translation-title">当前页译文</strong>
+            <span id="translation-state">尚未翻译</span>
+          </div>
+          <div class="translation-header-actions">
+            <label class="source-toggle" title="用于检查 PDF 文本层的提取结果"><input id="show-source" type="checkbox"> 提取原文</label>
+            <button id="retranslate-page" type="button" title="忽略当前页缓存，使用更强模型和更高推理强度重新翻译这一页">重译当前页</button>
+            <button id="close-translation" type="button" title="收起译文" aria-label="收起译文">×</button>
+          </div>
+        </header>
+        <div id="full-translation-status" class="full-translation-status" role="status" aria-live="polite" hidden>
+          <div class="full-translation-status__row">
+            <strong id="full-translation-status-title">全文翻译准备中</strong>
+            <span id="full-translation-elapsed">00:00</span>
+          </div>
+          <progress id="full-translation-meter" max="1" value="0"></progress>
+          <span id="full-translation-detail">正在检查本地缓存…</span>
+        </div>
+        <div id="translation-content" class="translation-content">
+          <div class="translation-empty">点击“翻译当前页”，译文会缓存在本机并与该 PDF 页关联。</div>
+        </div>
+      </section>
+    </div>
+    <script type="module" src="viewer.mjs"></script>
+  </body>
+</html>

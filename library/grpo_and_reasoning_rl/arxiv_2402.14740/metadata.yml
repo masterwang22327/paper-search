@@ -1,0 +1,34 @@
+id: arxiv_2402.14740
+arxiv_id: "2402.14740"
+title: "Back to Basics: Revisiting REINFORCE Style Optimization for Learning from Human Feedback in LLMs"
+authors: [Arash Ahmadian, Chris Cremer, Matthias Galle, Marzieh Fadaee, Julia Kreutzer, Olivier Pietquin, Ahmet Ustun, Sara Hooker]
+year: 2024
+venue: arXiv
+status: preprint
+version: v2
+published_at: "2024-02-22"
+updated_at: "2024-02-26"
+retrieved_at: "2026-07-15"
+urls:
+  abstract: "https://arxiv.org/abs/2402.14740v2"
+  pdf: "https://arxiv.org/pdf/2402.14740v2"
+topics: [rloo, reinforce, rlhf, ppo_alternative]
+paper_type: correction_critique
+priority: P0
+quality_score: null
+reading_status: candidate
+related_papers: [arxiv_1707.06347, arxiv_2402.03300, arxiv_2503.20783]
+artifacts:
+  code: {status: not_checked}
+  weights: {status: not_checked}
+  data: {status: not_checked}
+  checked_at: null
+source:
+  name: arXiv
+  official: true
+  evidence_checked: "official v2 metadata; PDF abstract, Sections 1-2.3 and RLOO Eq.9 only"
+local_source:
+  pdf: "source/arxiv_2402.14740v2.pdf"
+  extracted_text: "source/arxiv_2402.14740v2.txt"
+  pdf_sha256: "c997e5b1fe4e767385f6d4bcab2427ff1f65398572f79143feb899da1b6da398"
+
