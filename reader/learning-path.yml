@@ -17,9 +17,9 @@ stages:
       - file: arxiv-1706.03762.md
         bridge: "上一篇暴露了逐位置循环计算和附加注意力的限制；本篇把注意力升级为整个序列模型的骨架。"
       - file: modern-transformer-block.md
-        bridge: "Transformer 骨架已经清楚后，继续看 residual 与 norm 的放置怎样改变梯度路径，再辨认现代生成模型 block 为训练和服务增加了哪些状态。"
+        bridge: "Transformer 骨架已经清楚后，先用论文角色地图区分共同基线、机制论文、现代配方与前沿选读；再沿跨层优化、局部变换、位置表达和历史状态四条路径追踪旧问题、改动对象、不变量与新代价，最后回到 GQA、Llama 3.1、Mistral 和 DeepSeek-V2 的组合关系。"
       - file: decoding.md
-        bridge: "模型结构最终只给出下一个词元的概率分布；本篇继续解释这组概率怎样变成实际可见的文本。"
+        bridge: "上一篇停在 logits 与下一词元概率；本篇固定模型权重，只研究温度、过滤、搜索、采样与停止规则怎样把概率变成文本，并用模型/解码/评测三层检查点结束阶段 1。"
 
   - name: "预训练、数据、规模与评测地基"
     route_type: "主干"
@@ -47,7 +47,7 @@ stages:
 
   - name: "训练、并行、稀疏容量与高效适配"
     route_type: "主干"
-    purpose: "从单参数更新走到多卡状态分片，随后把通信与所有权知识用到稀疏专家路由，再讨论稳定训练、低成本适配和教师—学生迁移。"
+    purpose: "从单参数更新走到多卡状态分片与数值执行，再把通信、所有权和故障时钟用于稀疏专家路由，最后讨论低成本适配与教师—学生迁移。"
     entry: "进入前应能解释 loss 如何产生梯度，以及参数、activation 与 optimizer state 不是同一份内存。"
     outcome: "读完应能按参数/梯度/状态/activation/通信五本账比较 dense、MoE、并行、PEFT 和蒸馏。"
     checkpoint: "面对 OOM、吞吐下降或训练发散，能否先定位是持久状态、峰值 activation、通信、路由热点还是数值尺度？"
@@ -55,21 +55,21 @@ stages:
       - file: adam-adamw.md
         bridge: "先把每一步参数更新和 optimizer state 算清楚，再用 Adafactor 区分 full/factored second moment、update clipping 与 relative step size，最后用 AdamW 区分 decay path；这样才能正确讨论训练显存、并行和数值稳定。"
       - file: megatron-zero.md
-        bridge: "先用 GPipe 的 stage/micro-batch/rematerialization/bubble 建立流水线语义，再回到 Megatron/ZeRO：AdamW 明确了参数、梯度和状态三本账，本篇继续研究这些状态超出单卡后究竟怎样切分。"
+        bridge: "AdamW 已明确参数、梯度和优化器状态；本篇先跟同一个参数跨两个 rank 完成归约与更新，补齐 activation 和通信 buffer 的所有权，再在第二遍比较 Megatron、GPipe 与 ZeRO 分别切什么。"
       - file: training-numerical-stability.md
         bridge: "状态切分和跨卡归约已经明确后，先检查 dtype、归约、clip、恢复与精度路径怎样让一次分布式更新失真；稳定性是继续增加稀疏路由前的共同前置。"
       - file: moe-switch.md
-        bridge: "分布式状态与数值路径都能单独核对后，再看稀疏专家如何让每个 token 只访问部分 FFN，以及容量与 all-to-all 为什么成为新瓶颈。"
+        bridge: "分布式状态与数值路径都能单独核对后，让 8 个 token 经过一次 top-1 路由：追踪 router、expert、capacity overflow、residual 与 all-to-all，分清总容量、单 token 计算和通信三本账。"
       - file: moe-routing-load-balancing.md
-        bridge: "Switch 建立 token-choice、capacity 与辅助损失后，先补 dense checkpoint 怎样 upcycle 为 experts、何时不如从头训练，再用 DeepSeekMoE/OLMoE 把 expert width、shared active budget、matched recipe、routing association 与功能干预拆开；最后比较 Expert Choice、loss-free bias、V3、Qwen2 与 Qwen3，避免用采用事实或领域富集替代因果证据。"
+        bridge: "Switch 已建立 token-choice、capacity 与辅助损失；本篇固定同一 4-token score matrix，先比较 router gradient、expert bucket 和跨步 bias controller，再把现代模型谱系与专业化证据留到第二遍。"
       - file: mixture-of-depths.md
-        bridge: "MoE 已把 token 在同一层送往不同 FFN path；现在依次比较 MoD 的中层跳过/可重入、LayerSkip 的独立层 suffix termination/self-verification，以及 MoR 的共享层单调递归，并分账训练路由、K/V read semantics 与服务测量。"
+        bridge: "MoE 已让 token 在同一层选择 FFN；本篇改为选择整块深度，用 4 个 token 区分 MoD 跳过后重入、LayerSkip 后缀终止和 MoR 共享层递归，并核对各自 K/V 与服务时钟。"
       - file: arxiv-2106.09685.md
-        bridge: "理解全量训练成本后，LoRA 只更新低秩增量，明确它省下的是哪些参数与 optimizer 状态。"
+        bridge: "理解全量训练成本后，固定一个 `2x2` 线性层：冻结 `W0`、只更新 `A/B`，再分开训练、adapter-only 保存与 merged/unmerged 服务三个时钟。"
       - file: peft-adapters-prefix-prompt-qlora.md
-        bridge: "LoRA 提供一个具体基线，再把 Adapter、Prefix、Prompt 和 QLoRA 放到同一资源账本中比较。"
+        bridge: "LoRA 提供了具体基线；现在保持同一基座、样本和 loss，只改变任务自由度的位置，比较 Adapter、Prefix、Prompt、LoRA 与 QLoRA 谁接收梯度、保存什么、服务时谁仍存在。"
       - file: knowledge-distillation-autoregressive.md
-        bridge: "PEFT 改变可训练对象；蒸馏则改变监督来源，继续比较 logits、响应与在线反馈分别传递什么。"
+        bridge: "PEFT 改变可训练对象而不改变监督来源；蒸馏固定 teacher/student 与同一 prompt，继续比较教师交付完整 logits、离线 response 或学生前缀上的在线信号时，训练人口和时钟怎样变化。"
 
   - name: "指令、偏好与推理后训练"
     route_type: "主干"
@@ -80,18 +80,34 @@ stages:
     papers:
       - file: instruction-cot-self-consistency.md
         bridge: "基础模型训练完成后，用同一道算术题先区分三件事：监督样本怎样更新参数、带步骤提示怎样只改变当前生成、多路径投票怎样只改变最终决策；再进入现代推理后训练。"
+      - file: reward-verifier-policy-learning.md
+        bridge: "沿用 `17+26`，加入一条错误抵消但答案为 43 的轨迹；切换 best-of-N、RS-SFT、PPO/GRPO、DPO、MCTS-DPO 与 ILQL，逐项固定样本生产者、标签/评分器、梯度接收者和内外刷新时钟。"
       - file: preference-reward-overoptimization.md
-        bridge: "先读 Stiennon 2020 pp.3–7，补齐 Human Preferences 到 InstructGPT 的 SFT→RM→PPO/KL 语言模型桥；再研究比较数据怎样变成 reward，以及策略为何会主动利用代理目标的误差。"
+        bridge: "沿用同一 prompt 和 A/B 回答，先把偏好标签变成 RM 更新，再冻结 RM 让 policy 搜索新候选，最后用独立 gold 审计分布漂移；历史闭环与现代训练器第二遍再读。"
       - file: arxiv-1707.06347.md
-        bridge: "比较数据怎样变成 reward、代理怎样被利用已经清楚后，现在用两动作手算 reward 如何经 log-prob 改变概率，再学 PPO 为什么还需要 advantage、old/current ratio 和 clip。"
+        bridge: "比较数据怎样变成 reward、代理怎样被利用已经清楚后，用同一条两动作 rollout 依次计算 advantage、old/current ratio、clip、多 epoch 与快照刷新，并确认 clip 不是概率硬边界。"
       - file: neurips-2022-instructgpt.md
-        bridge: "PPO、偏好模型和 SFT 三块已经分别清楚，现在用 InstructGPT 把它们连成完整 RLHF 流程。"
+        bridge: "PPO、偏好模型和 SFT 三块已经分别清楚；现在固定同一数据库备份问题和两条回答，把 SFT、RM、PPO 的数据生产者、冻结对象、梯度与 checkpoint 时钟连起来。"
       - file: neurips-2023-dpo.md
-        bridge: "标准 RLHF 流程明确后，DPO 才能作为对照：它把显式 reward 与在线 RL 改写成离线 pair loss。"
+        bridge: "标准 RLHF 流程明确后，DPO 保持同一 chosen/rejected pair，用 current/reference 四个序列分数直接形成离线 pair loss；显式 RM、critic 和在线 rollout 因而退出这条训练图。"
       - file: process-supervision-test-time-search.md
-        bridge: "PPO 与 DPO 已经说明 generator 怎样被更新；现在先冻结 generator，把 ORM/PRM 的监督、best-of-N/search 的选择和 verifier-reward RL 拆成三种不同动作。"
+        bridge: "PPO 与 DPO 已经说明 generator 怎样更新；现在固定 `17+26` 的两条候选并冻结 generator，把 ORM/PRM 训练、best-of-N 选择和后来用 verifier reward 更新 policy 拆成三种动作。"
       - file: reasoning-rl-reductions.md
-        bridge: "PPO/DPO 的策略更新与 verifier 的训练、选择边界都已明确；现在从概率比、reference 和 reduction 出发，审计 GRPO、DAPO、GSPO 的真实优化单位。"
+        bridge: "策略更新与 verifier 的训练、选择边界已经明确；最后用长度 `2/8`、奖励 `1/0` 的同组回答比较 group baseline、std 与两种 token 分母，再按需审计 GRPO、DAPO、GSPO 的真实单位。"
+
+  - name: "多模态、工具调用与运行时安全"
+    route_type: "主干"
+    purpose: "把视觉输入、结构化工具调用和不可信观察放回同一条 Agent ABI，先理解输入与外部状态怎样连接，再处理权限与攻击边界。"
+    entry: "进入前应理解 Transformer hidden/logits、SFT 与基本 observation -> action -> environment loop；不要求先背视觉编码器或安全缩写。"
+    outcome: "读完应能分开 pixels/frames、bridge tokens、call tokens、schema、permission、executor state 和 utility/security verdict。"
+    checkpoint: "面对一条多模态工具轨迹，能否指出视觉 token 在哪里进入 LM、哪个字符串只是候选 action、谁拥有授权真值，以及攻击文本怎样被挡在副作用之外？"
+    papers:
+      - file: multimodal-llm-vision-language-abi.md
+        bridge: "先把数据库控制台截图固定为 `420x840`，沿 `pixels -> visual states -> bridge -> logits -> OCR/coordinate/time parser` 走通视觉输入 ABI；先分清 token 数、时间戳和答案解析，再读 Flamingo/LLaVA/Qwen 的完整配方。"
+      - file: tool-use-function-calling-abi.md
+        bridge: "截图读出的 `snapshot_id=s42` 只是模型上下文；本页将它变成 call tokens，经 parser/schema、permission gate、executor 和数据库终态，接上 ReAct、Toolformer 与 tau-bench 的不同训练/评测对象。"
+      - file: agent-runtime-prompt-injection-security.md
+        bridge: "工具返回中加入‘恢复未校验 s43’的不可信备注，沿用同一调用 ABI 区分 provenance、semantic content、authorization、side effect 与 verdict，再看层级训练和 stateful injection benchmark 的边界。"
 
   - name: "Agentic RL：credit、能力边界与系统合同"
     route_type: "主干"
@@ -101,15 +117,15 @@ stages:
     checkpoint: "一条 Agent 轨迹变成训练 batch 时，能否逐项固定 state、action span、verdict、old log-prob、policy version、route、reduction 和失败责任？"
     papers:
       - file: agentic-rl-credit-assignment.md
-        bridge: "PPO/GRPO 的 advantage、ratio 与 reduction 单位已经清楚后，比较 repeated state、environment step、state graph、gold-likelihood turn 和 sandbox branch 五种 credit object；不把不同信息条件写成升级榜。"
+        bridge: "PPO/GRPO 的 advantage、ratio 与 reduction 单位已经清楚后，固定 Daily→Weekly 三步轨迹，先走 state→action→transition→verdict→credit→action-token loss；五种 credit 方法放到第二遍。"
       - file: evaluator-judge-validity-cua.md
-        bridge: "上一篇暂时把终局 verdict 当作可信输入；本篇打开 verdict 黑箱，把 task、environment、trajectory、script oracle、VLM judge 与人工 gold 拆成测量管线，再判断 credit 是否建立在可靠标签上。"
+        bridge: "上一篇暂以审计后的 reward 1 构造 credit；本篇回到同一成功轨迹，解释 raw script 0、VLM 1、human 1 为何会反转训练方向，再把 execution、harness 和 judge error 分账。"
       - file: agentic-rl-capability-failures.md
-        bridge: "成功标签的误分边界已经明确后，再用 greedy/sampled headroom、PASS@(k,T)、positive control 和 control-token trace 分开可靠性、观测边界与接口崩溃。"
+        bridge: "成功标签的误分边界已经明确后，固定 Atlas 三跳检索 checkpoint C0，用 greedy 失败与 8 条 sampled rollout 手算 PASS@(k,T)，分开 capability、reliability、format 和 harness。"
       - file: agentic-rl-environments-systems.md
-        bridge: "先知道要更新什么、怎样证明增量，再验收 executable state、verifier、native harness、exact tokens/log-probs、policy version、MoE route 和完整基础设施成本。"
+        bridge: "先知道要更新什么、怎样证明增量，再把 Daily→Weekly 轨迹变成 13-token 可重放 batch，固定 state、raw verdict、action span、old log-prob、policy version 和系统所有者。"
       - file: async-staleness-rolloutpipe.md
-        bridge: "环境与 rollout provenance 已经建立后，进一步区分配置 lag、sampled log-ratio tail、MoE route mismatch 与 complete-group 调度；不要把吞吐重叠自动写成策略质量提升。"
+        bridge: "上一页由 v17 生成的同一 batch 排队到 current v19；用 Ctrl+S token 手算 sampled ratio，再分开 policy lag、MoE route mismatch、tail clip 与 complete-group 调度。"
 
   - name: "可扩展监督与控制评测"
     route_type: "选读分支"
@@ -119,7 +135,21 @@ stages:
     checkpoint: "面对一个 scalable oversight 结果，能否指出谁知道真值、谁能看证据、失败后是否可停止，以及 utility tax 怎样计算？"
     papers:
       - file: scalable-oversight-control-evaluation.md
-        bridge: "Agentic RL 已经暴露环境与 judge 的测量风险；这条安全选读分支进一步处理强模型可能超过或误导监督者时的监督、检查、控制与根因审计。"
+        bridge: "Agentic RL 已经暴露环境与 judge 的测量风险；现在固定一段含精确日期后门的 patch，逐一比较弱标签训练、批评、辩论、运行时控制和条件审计能看什么、更新谁、承诺什么。"
+
+  - name: "模型内部审计、知识更新与数据飞轮"
+    route_type: "进阶分支"
+    purpose: "把模型内部机制、参数知识更新/删除和训练数据人口连成生命周期审计链，区分观察、因果干预、编辑、遗忘与递归数据偏移。"
+    entry: "进入前应理解 hidden state、梯度、微调和评测合同；完整线性代数与隐私攻击细节放在第二遍。"
+    outcome: "读完应能回答一个行为变化究竟来自哪里、改了哪个对象、是否逼近反事实 reference，以及合成数据如何改变下一代训练分布。"
+    checkpoint: "看到‘模型记住了新事实/忘掉了旧数据/合成数据提升了分数’时，能否分别固定 intervention、reference、forget/retain、provenance、长尾与独立评测？"
+    papers:
+      - file: mechanistic-interpretability-causal-intervention.md
+        bridge: "从工具安全页的 `s42/s43` 行为差异出发，先用 clean/corrupt activation patching 测量 `logit(Paris)-logit(Rome)`，再区分 probe、causal trace、ROME 和 SAE 的对象与因果边界。"
+      - file: knowledge-editing-machine-unlearning.md
+        bridge: "定位不等于更新：把‘保留 30 天’改为‘7 天’，再把客户记录从训练中删除，分别走 ROME/MEMIT 的局部写入与 TOFU/MUSE 的 forget/retain/privacy/reference 合同。"
+      - file: synthetic-data-feedback-loops.md
+        bridge: "编辑/遗忘暴露了训练人口问题；沿用数据库恢复样本，跟踪 seed、producer、filter、real/synthetic mixture、student loss 和下一代 tail coverage，连接 Self-Instruct、phi-1 与 model collapse。"
 
   - name: "Embedding 与单向量检索主干"
     route_type: "主干"
@@ -129,11 +159,11 @@ stages:
     checkpoint: "给定一批 query/passage，能否写出正例、batch 内负例、相似度矩阵、NLL 和 Recall@K 分别怎样计算？"
     papers:
       - file: sentence-embeddings-semantic-retrieval.md
-        bridge: "从 BERT hidden state 出发，用 SBERT/SimCSE 分清 cross-encoder、bi-encoder、pooling、对比负样本和 STS 几何；这一步解释为什么表示需要专门训练才能离线索引。"
+        bridge: "从 BERT hidden state 出发，固定“如何重置密码”与三个候选，先比较 cross/bi encoder，再走 token hidden→pooling→可缓存向量→online scores。"
       - file: general-text-embedding-training.md
-        bridge: "SBERT/SimCSE 已说明句向量为何需要专门监督；本页把 pooling、prefix、pair/negative、temperature、batch、多语、蒸馏和 MRL 还原成同一条可手算训练路径。"
+        bridge: "句向量接口已经明确后，加入修改邮箱、服务价格组成三组 pair，用同一个 `3×3` matrix 解释 prefix、temperature、batch negative、数据 producer 与 index 时钟。"
       - file: dpr-dense-retrieval.md
-        bridge: "通用对比训练路径明确后，用 DPR 固定 query/passage 两端、B×B NLL、BM25 对照和 QA Recall@K，为下一阶段 RAG 提供可测的候选召回接口。"
+        bridge: "通用对比训练路径明确后，把同一组三条 pair 解释为 question/supporting-passage，复算 row-wise NLL，再发布 passage index 并分开 Recall@K、reader EM 与引用支持。"
 
   - name: "外部知识与事实性"
     route_type: "主干"
@@ -143,9 +173,9 @@ stages:
     checkpoint: "答案带引用时，能否分别检查候选是否召回、引用是否对应原文、原文是否支持主张、答案是否有用？"
     papers:
       - file: rag-external-memory.md
-        bridge: "DPR 已经把候选召回变成可测接口；RAG 继续研究如何把检索结果作为 latent memory 交给生成器。"
+        bridge: "DPR 已召回重置密码的 `z1/z2`；本篇让两篇文档分别生成，手算 Sequence/Token marginal、责任与 query gradient，再把 citation 验收留成独立接口。"
       - file: factuality-calibration-selfcheck.md
-        bridge: "RAG 提供来源但不保证答案正确；本篇区分事实性、置信校准和多次采样一致性。"
+        bridge: "沿用 `z1` 的“链接 10 分钟有效”，构造回答写“24 小时”却自报 0.9 且 5 次稳定复述的反例，拆开正确性、引用支持、校准和一致性。"
 
   - name: "检索架构与领域选型"
     route_type: "选读分支"
@@ -155,13 +185,23 @@ stages:
     checkpoint: "面对一个 embedding leaderboard，能否先核对 pooling、prefix、dimension、normalization、negative、index、metric 和下游任务？"
     papers:
       - file: late-interaction-multivector-retrieval.md
-        bridge: "回到 DPR 的单向量基线，用 ColBERT/ColBERTv2 引入 multi-vector/late interaction，分清 token-level score、候选召回、压缩 index 和重排成本。"
+        bridge: "回到重置密码的 `z1/z2`，把 DPR 的一文一向量换成 token 多向量，手算 MaxSim，并分开 ANN candidate、精排、teacher 监督和残差压缩。"
       - file: embedding-models-lineage-selection.md
-        bridge: "single-vector、multi-vector、DPR 与 Recall@K 已有共同坐标；现在读 FAISS 的 ANN/IVF/PQ/bytes-recall，并用 MTEB 与模型谱系练习选型。"
+        bridge: "single/multi-vector 已可比较；现在固定 100 万 chunk，把 checkpoint、向量 payload、FAISS/ANN/PQ、Recall 与最终 RAG 指标分成四层后再做模型选型。"
       - file: llm-embedding-qwen-mistral.md
-        bridge: "通用 encoder 与索引合同明确后，再比较 causal EOS、bidirectional mask、MNTP/SimCSE、few-shot ICL、dual-mode、Qwen3 与 Mistral/Codestral Embed 的公开边界。"
+        bridge: "索引合同固定后，沿用同一 query/passage 的 `[L,d]` hidden，比较 causal EOS、bidirectional mean 与 dual mode，再检查 MNTP/SimCSE、ICL 和产品证据。"
       - file: code-embedding-retrieval.md
-        bridge: "文本 embedding 的训练、索引和指标已经分账；最后转到代码域，审计 AST/data-flow、行为/文档粒度、hard negative 和 repo/time split 怎样改变同一检索合同。"
+        bridge: "最后只替换检索真值：用 JSON 流式解析 issue 在 `R17` 中定位 file/symbol，拆开函数文档 proxy、patch 文件、人工上下文和 test pass，再审计结构与 negative。"
+
+  - name: "代码生成与软件工程 Agent"
+    route_type: "选读分支"
+    purpose: "从代码检索候选进入补全、可执行程序和真实仓库修复，建立代码 token、测试 reward、repo revision、ACI 和回归终态的连续接口。"
+    entry: "进入前应完成代码 embedding/retrieval，理解 token logits、pass@k 和基本工具 loop；仓库级环境细节按第二遍回查。"
+    outcome: "读完应能把 FIM、compiler/test feedback、SWE-bench resolved 和 SWE-agent ACI 分成模型、环境、接口与评测四个对象。"
+    checkpoint: "一个 patch 测试通过时，能否说明它使用了哪个 repo revision、环境、测试分母和 ACI，并指出 syntax、example test、hidden regression 与安全质量仍缺什么？"
+    papers:
+      - file: code-generation-software-engineering-agents.md
+        bridge: "代码检索已经定位 `R17/select_snapshot`；本页把候选文件变成 FIM span、编译/测试反馈和多文件 patch，最后用 SWE-bench/SWE-agent 的干净仓库回放验收终态。"
 
   - name: "长上下文与序列状态"
     route_type: "进阶分支"
@@ -171,17 +211,17 @@ stages:
     checkpoint: "看到‘支持 1M context’或‘无 KV cache’时，能否追问训练长度、状态容量、访问路径、检索任务与真实 prefill/decode 成本？"
     papers:
       - file: inference-serving-quantization.md
-        bridge: "评测合同建立后进入推理系统，先弄清 KV cache、调度、kernel、量化和服务 SLO 分别改变什么；KIVI 用 K/V 不同量化轴与近期高精度 residual 说明低 bit 是状态 ABI，不是一个 dtype 开关。"
+        bridge: "评测合同建立后，把第 2 段为 10 分钟、第 15 段为 24 小时的同一请求送入服务：先走 prefill/decode、cache 长度和等待时钟，再把调度、kernel、推测解码与量化放回各自对象。"
       - file: long-context-memory-evaluation.md
-        bridge: "掌握 KV 与服务成本后，再把长上下文拆成容量、状态、检索、利用和评测五层问题。"
+        bridge: "请求状态与等待成本已经明确后，沿用同一 16 段提示，从 ids/hidden、远端 attention edge、logits 到 parser 推出位置、容量、前向、训练 credit 与行为五个断点。"
       - file: arxiv-2312.00752.md
-        bridge: "长上下文暴露 attention 与 KV 状态的扩展瓶颈，Mamba 提供选择性压缩状态这一替代路线。"
+        bridge: "full attention 的远端边和 KV 增长已经分开；现在让同一 16 段提示逐 token 压进固定 `h:[B,D,N]`，观察输入相关写入能否保留早期 10 分钟并抑制晚到 24 小时。"
       - file: efficient-attention-delta-state.md
-        bridge: "Mamba 先说明输入相关 gate 怎样管理固定状态；再用 DeltaNet/Gated DeltaNet 比较只追加、按 key 覆盖与全状态遗忘，并用 Differential Attention 反例阻止名称混淆。"
+        bridge: "Mamba 展示了有限状态怎样按内容写入；现在把 reset-link 的旧 24 小时关联改写为 10 分钟，比较只追加、按 key 覆盖和全局/channel 衰减，并检查错误信息怎样覆盖回去。"
       - file: native-sparse-attention.md
-        bridge: "固定状态压缩的收益与信息瓶颈已经清楚后，用 NSA 补中间路线：保留逐 token raw K/V，但让每个 query 只做全局粗查、少量连续块精读和近期读取；重点区分访问压缩、容量压缩与真实 SLO。"
+        bridge: "固定状态的覆盖与碰撞已经清楚后，NSA 回到仍保存 raw K/V 的中间路线：让末尾 query 用摘要粗查第 2 段、回原文精读 10 分钟，同时看见 window 中第 15 段的 24 小时干扰。"
       - file: arxiv-2403.05530.md
-        bridge: "Mamba/Delta 与 NSA 已分别展示状态压缩、访问压缩及各自 hybrid 边界；Gemini 1.5 再作为闭源 attention/MoE 对照，检验百万级窗口是否真的能利用。"
+        bridge: "状态压缩与访问压缩都走完后，把同一 16 段提示交给 Gemini 报告式 evaluator：分别检查单目标、多目标、冲突证据、API error 分母和闭源 checkpoint 边界。"
 
   - name: "现代模型系列"
     route_type: "综合验收"
@@ -191,10 +231,10 @@ stages:
     checkpoint: "面对 Qwen/DeepSeek 新版本，能否画出保留、替换、组合和未知四类变化，并拒绝把整模增益归因给一个组件？"
     papers:
       - file: llama1-llama2-llama31-lineage.md
-        bridge: "训练、后训练和长上下文前置都完成后，先用 Llama 三代区分一次 loss 的内层更新与跨轮数据刷新的外层时钟。"
+        bridge: "训练、后训练和长上下文前置都完成后，固定数据库恢复 A/B/C：用 Llama 2/3.1 区分 RM 选择、RS-SFT、PPO、DPO 的内层梯度与跨轮数据刷新。"
       - file: qwen2-qwen25-qwen3-lineage.md
-        bridge: "Llama 已示范如何拆品牌代际；现在把同一差分方法用于 Qwen2、Qwen2.5、Qwen3，区分系列保留项、替换项和重接的信号路径。"
+        bridge: "沿用恢复 A/B/C，把 Llama 的 chosen/rejected 接到 Qwen2 episodic pair、Qwen2.5 fixed pair 与 current-response scalar/group，再分出 Qwen3 多评价器和学生蒸馏。"
       - file: arxiv-2412.19437.md
-        bridge: "Qwen 谱系已经训练了跨版本差分；现在综合现代 block、KV cache、并行和低精度知识，审计 V3 的 MLA、MoE、MTP 与 FP8。MTP 先对照 ICML independent heads 与 V3 gold-conditioned depth，再把训练目标、proposal、target 校验和 state commit 四层分开。"
+        bridge: "候选 A 现在不再只是训练信号：让它逐 token 走过 MLA cache、MoE route、main logits、MTP future CE 和 FP8 数值时钟，分开状态、条件计算、监督与实现。"
       - file: deepseek-v2-v3-r1-lineage.md
-        bridge: "V3 的计算图已经清楚后，再连接 V2、V3 与 R1：分别画权重/架构继承和行为/数据继承，避免把 R1-Zero、R1-Distill 与 V3 组件混成一条品牌时间线。"
+        bridge: "V3 计算图已经清楚后，将恢复 A 先放进可执行 sandbox 做 verifier-RL，再改成固定 response 训练 Qwen/Llama student；用这两条路分开权重/架构与行为/数据继承。"

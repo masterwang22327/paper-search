@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>论文 PDF</title>
-    <link rel="stylesheet" href="viewer.css">
+    <link rel="stylesheet" href="viewer.css?v=20260805-4">
   </head>
   <body>
     <header class="toolbar" aria-label="PDF 工具栏">
@@ -27,9 +27,7 @@
       </div>
       <span class="divider"></span>
       <div class="toolbar-group translation-tools">
-        <button id="translate-page" type="button" class="translation-action" title="使用页面文本和整页图像翻译当前 PDF 页">翻译当前页</button>
-        <button id="translate-all" type="button" class="translation-all-action" title="在本地后台按顺序翻译所有未缓存页面；离开当前文档后仍会继续">翻译全文</button>
-        <span id="full-translation-progress" class="full-translation-progress" aria-live="polite" hidden></span>
+        <button id="translation-toggle" type="button" class="translation-toggle" title="打开中文译文" aria-pressed="false">译文</button>
       </div>
       <span class="toolbar-spacer"></span>
       <a id="open-original" target="_blank" rel="noopener">原始 PDF</a>
@@ -47,11 +45,39 @@
             <span id="translation-state">尚未翻译</span>
           </div>
           <div class="translation-header-actions">
-            <label class="source-toggle" title="用于检查 PDF 文本层的提取结果"><input id="show-source" type="checkbox"> 提取原文</label>
-            <button id="retranslate-page" type="button" title="忽略当前页缓存，使用更强模型和更高推理强度重新翻译这一页">重译当前页</button>
             <button id="close-translation" type="button" title="收起译文" aria-label="收起译文">×</button>
           </div>
         </header>
+        <div class="translation-commandbar" aria-label="翻译操作与参数">
+          <div id="retranslation-controls" class="retranslation-controls" aria-label="翻译参数">
+            <span class="retranslation-controls__label">翻译参数</span>
+            <div class="translation-settings">
+              <label>
+                <span class="visually-hidden">模型</span>
+                <select id="retranslation-model" aria-label="翻译模型">
+                  <option value="gpt-5.6-terra">gpt-5.6-terra</option>
+                  <option value="gpt-5.6-sol">gpt-5.6-sol</option>
+                </select>
+              </label>
+              <label>
+                <span class="visually-hidden">强度</span>
+                <select id="retranslation-effort" aria-label="翻译推理强度">
+                  <option value="medium">medium</option>
+                  <option value="high">high</option>
+                  <option value="xhigh">xhigh</option>
+                  <option value="max">max</option>
+                  <option value="ultra">ultra</option>
+                </select>
+              </label>
+            </div>
+            <span id="full-translation-progress" class="full-translation-progress" aria-live="polite" hidden></span>
+            <div class="translation-actions">
+              <button id="translate-page" type="button" class="translation-action" title="结合页面文本和整页图像翻译当前 PDF 页">翻译本页</button>
+              <button id="translate-all" type="button" class="translation-all-action" title="按当前模型和强度在后台补齐所有未缓存页面；离开当前文档后仍会继续">翻译全文</button>
+              <button id="retranslate-page" type="button" title="忽略当前页缓存，按所选模型和推理强度重新翻译">重新翻译</button>
+            </div>
+          </div>
+        </div>
         <div id="full-translation-status" class="full-translation-status" role="status" aria-live="polite" hidden>
           <div class="full-translation-status__row">
             <strong id="full-translation-status-title">全文翻译准备中</strong>
@@ -61,7 +87,7 @@
           <span id="full-translation-detail">正在检查本地缓存…</span>
         </div>
         <div id="translation-content" class="translation-content">
-          <div class="translation-empty">点击“翻译当前页”，译文会缓存在本机并与该 PDF 页关联。</div>
+          <div class="translation-empty">翻译本页后，译文会缓存在本机并与该 PDF 页关联。</div>
         </div>
       </section>
     </div>

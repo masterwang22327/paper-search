@@ -24,13 +24,21 @@ let pageDetectionGeneration = 0;
 let readerToken;
 let translationBusy = false;
 let translationRequestId = 0;
+let translationStateController;
 let translationPanelOpen = false;
+let translationPanelDismissed = false;
+let renderedTranslation = null;
+let renderedTranslationPage = 0;
 let fullTranslationRunning = false;
 let fullTranslationStopRequested = false;
 let fullTranslationTimer;
 let fullTranslationStatusState;
+let fullTranslationPollPromise;
+let fullTranslationPollController;
 let statusHintTimer;
 let citationCentered = false;
+let pdfPanState = null;
+let suppressPdfClick = false;
 
 const blockTypeLabels = {
   heading: "标题",
@@ -54,6 +62,7 @@ const previousButton = document.querySelector("#previous");
 const nextButton = document.querySelector("#next");
 const zoomLabel = document.querySelector("#zoom-label");
 const openOriginal = document.querySelector("#open-original");
+const translationToggleButton = document.querySelector("#translation-toggle");
 const translatePageButton = document.querySelector("#translate-page");
 const translateAllButton = document.querySelector("#translate-all");
 const fullTranslationProgress = document.querySelector("#full-translation-progress");
@@ -68,10 +77,17 @@ const translationTitle = document.querySelector("#translation-title");
 const translationState = document.querySelector("#translation-state");
 const translationContent = document.querySelector("#translation-content");
 const retranslatePageButton = document.querySelector("#retranslate-page");
+const retranslationControls = document.querySelector("#retranslation-controls");
+const retranslationModelSelect = document.querySelector("#retranslation-model");
+const retranslationEffortSelect = document.querySelector("#retranslation-effort");
 const closeTranslationButton = document.querySelector("#close-translation");
-const showSourceToggle = document.querySelector("#show-source");
 const translationWidthKey = "research-reader-translation-width";
-const translationSourceKey = "research-reader-translation-show-source";
+const translationModelKey = "research-reader-translation-model";
+const translationEffortKey = "research-reader-translation-effort";
+const legacyTranslationModelKey = "research-reader-translation-retranslation-model";
+const legacyTranslationEffortKey = "research-reader-translation-retranslation-effort";
+const revisionModels = new Set(["gpt-5.6-terra", "gpt-5.6-sol"]);
+const revisionReasoningEfforts = new Set(["medium", "high", "xhigh", "max", "ultra"]);
 const combiningMathDisplayReplacements = new Map([
   ["\u20d0", "↼"],
   ["\u20d1", "⇀"],
@@ -239,7 +255,7 @@ function selectRenderedBlock(blockId) {
 
 function centerTranslationBlock(blockId, behavior = "smooth") {
   const escaped = CSS.escape(blockId || "page");
-  const element = translationContent.querySelector(`.translation-target [data-block-id="${escaped}"]`)
+  const element = translationContent.querySelector(`.translation-target .translation-block[data-block-id="${escaped}"]`)
     || translationContent.querySelector(`[data-block-id="${escaped}"]`);
   if (!element) return;
   const container = translationContent.getBoundingClientRect();
@@ -251,12 +267,18 @@ function centerTranslationBlock(blockId, behavior = "smooth") {
 }
 
 function centerPdfBox(record, box, behavior = "smooth") {
-  const viewport = record.page.getViewport({ scale: scaleFor(record) });
-  const rectangle = viewport.convertToViewportRectangle(box);
-  const targetCenter = record.element.offsetTop + (rectangle[1] + rectangle[3]) / 2;
+  const pageViewport = record.page.getViewport({ scale: scaleFor(record) });
+  const rectangle = pageViewport.convertToViewportRectangle(box);
+  const viewportBounds = viewportElement.getBoundingClientRect();
+  const pageBounds = record.element.getBoundingClientRect();
+  const targetX = (rectangle[0] + rectangle[2]) / 2;
+  const targetY = (rectangle[1] + rectangle[3]) / 2;
+  const targetCenterX = viewportElement.scrollLeft + pageBounds.left - viewportBounds.left + targetX;
+  const targetCenterY = viewportElement.scrollTop + pageBounds.top - viewportBounds.top + targetY;
+  if (behavior === "smooth") suspendPageDetectionUntilSettled(500);
   viewportElement.scrollTo({
-    top: Math.max(0, targetCenter - viewportElement.clientHeight / 2),
-    left: 0,
+    top: Math.max(0, targetCenterY - viewportElement.clientHeight / 2),
+    left: Math.max(0, targetCenterX - viewportElement.clientWidth / 2),
     behavior
   });
 }
@@ -373,7 +395,7 @@ function makeFigureData(value) {
   return container;
 }
 
-function makeTranslationBlock(block, source) {
+function makeTranslationBlock(block) {
   const article = document.createElement("article");
   article.className = "translation-block";
   article.dataset.blockId = block.id || "page";
@@ -396,13 +418,11 @@ function makeTranslationBlock(block, source) {
   location.textContent = locationLabel(block);
   label.append(natural, technical, confidence, location);
   const text = document.createElement("div");
-  text.textContent = readableMathText(
-    source ? (block.original_text || "（该块没有可用原文文本层）") : (block.translation || "")
-  );
+  text.textContent = readableMathText(block.translation || "");
   article.append(label, text);
-  const structure = !source && block.table_data
+  const structure = block.table_data
     ? makeTableData(block.table_data)
-    : (!source && block.figure_data ? makeFigureData(block.figure_data) : null);
+    : (block.figure_data ? makeFigureData(block.figure_data) : null);
   if (structure) article.appendChild(structure);
   article.addEventListener("click", () => focusPdfBlock(block, "translation"));
   article.addEventListener("keydown", event => {
@@ -472,12 +492,38 @@ function applyTranslationWidth(width) {
   translationPanel.style.setProperty("--translation-panel-width", `${Math.round(clamped)}px`);
 }
 
-function setTranslationPanel(open) {
+function fullTranslationIsComplete() {
+  const state = fullTranslationStatusState;
+  return Boolean(state && state.total > 0 && state.completed >= state.total && !fullTranslationRunning);
+}
+
+function updateTranslationControls() {
+  const hasTranslation = Boolean(renderedTranslation && renderedTranslationPage === pageNumber);
+  const fullComplete = fullTranslationIsComplete();
+  const unavailable = !readerToken;
+  translationToggleButton.classList.toggle("is-active", translationPanelOpen);
+  translationToggleButton.setAttribute("aria-pressed", String(translationPanelOpen));
+  translationToggleButton.title = translationPanelOpen ? "收起中文译文" : "打开中文译文";
+  translationToggleButton.disabled = unavailable;
+  translatePageButton.hidden = hasTranslation;
+  retranslationControls.hidden = false;
+  retranslatePageButton.hidden = !hasTranslation;
+  translatePageButton.disabled = unavailable || translationBusy || fullTranslationRunning;
+  retranslatePageButton.disabled = unavailable || translationBusy || fullTranslationRunning;
+  retranslationModelSelect.disabled = unavailable || translationBusy || fullTranslationRunning;
+  retranslationEffortSelect.disabled = unavailable || translationBusy || fullTranslationRunning;
+  translateAllButton.disabled = unavailable || translationBusy || fullTranslationStopRequested || fullComplete;
+}
+
+function setTranslationPanel(open, manual = false) {
   const changed = translationPanelOpen !== open;
   const targetPage = pageNumber;
+  if (manual && !open) translationPanelDismissed = true;
+  if (open) translationPanelDismissed = false;
   translationPanelOpen = open;
   translationPanel.hidden = !open;
   translationResizer.hidden = !open;
+  updateTranslationControls();
   if (open) {
     const saved = Number(localStorage.getItem(translationWidthKey));
     if (Number.isFinite(saved) && saved > 0) applyTranslationWidth(saved);
@@ -496,41 +542,42 @@ function setTranslationPanel(open) {
 
 function renderTranslation(value, sourceText = "", { preserveScroll = false } = {}) {
   const previousScrollTop = preserveScroll ? translationContent.scrollTop : 0;
+  renderedTranslation = value;
+  renderedTranslationPage = pageNumber;
   translationTitle.textContent = `PDF 第 ${pageNumber} 页 · 中文译文`;
+  translationContent.classList.remove("is-refreshing");
   translationContent.innerHTML = "";
   translationContent.scrollTop = previousScrollTop;
   const currentRecord = pageRecords[pageNumber - 1];
   if (!value) {
     setRecordBlocks(currentRecord, []);
     translationState.textContent = "尚未翻译";
-    translationContent.innerHTML = '<div class="translation-empty">该页尚未翻译。原始 PDF 保持在左侧，点击“翻译当前页”开始。</div>';
+    translationContent.innerHTML = '<div class="translation-empty">该页尚未翻译。可在上方翻译本页，结果会保存在本机。</div>';
+    updateTranslationControls();
     return;
   }
-  translationState.textContent = value.visual_input
-    ? "已缓存 · 已结合页面图像校正 · 点击块可回查 PDF"
-    : "已缓存 · 点击块可回查 PDF";
+  const modelSummary = [value.translation_model, value.translation_reasoning_effort]
+    .filter(Boolean)
+    .join(" / ");
+  translationState.textContent = [
+    "已缓存",
+    modelSummary,
+    value.visual_input ? "图像校正" : "文本层"
+  ].filter(Boolean).join(" · ");
+  translationState.title = "点击任一译文块可回查左侧 PDF 位置";
   const columns = document.createElement("div");
   columns.className = "translation-columns";
-  columns.classList.toggle("show-source", showSourceToggle.checked);
-  const source = document.createElement("div");
-  source.className = "translation-source";
-  const sourceBlocks = Array.isArray(value.blocks) && value.blocks.length
-    ? value.blocks
-    : [{ id: "page", original_text: value.source_text || sourceText || "（没有可用原文文本层）", confidence: "medium" }];
   const targetBlocks = Array.isArray(value.blocks) && value.blocks.length
     ? value.blocks
     : [{ id: "page", translation: value.translation, confidence: "medium" }];
-  setRecordBlocks(currentRecord, sourceBlocks);
-  addTextLayerLocations(currentRecord, sourceBlocks).catch(() => {});
-  for (const block of sourceBlocks) {
-    source.appendChild(makeTranslationBlock(block, true));
-  }
+  setRecordBlocks(currentRecord, targetBlocks);
+  addTextLayerLocations(currentRecord, targetBlocks).catch(() => {});
   const target = document.createElement("div");
   target.className = "translation-target";
   for (const block of targetBlocks) {
-    target.appendChild(makeTranslationBlock(block, false));
+    target.appendChild(makeTranslationBlock(block));
   }
-  columns.append(source, target);
+  columns.appendChild(target);
   translationContent.appendChild(columns);
   selectRenderedBlock(currentRecord?.selectedBlockId);
   if (value.warnings?.length) {
@@ -540,64 +587,109 @@ function renderTranslation(value, sourceText = "", { preserveScroll = false } = 
     translationContent.appendChild(warning);
   }
   if (preserveScroll) translationContent.scrollTop = previousScrollTop;
+  updateTranslationControls();
 }
 
 async function loadTranslationState({ preserveScroll = false } = {}) {
   if (!sourceId || !pdfDocument || !readerToken) return;
+  translationStateController?.abort();
+  const requestedPage = pageNumber;
   const requestId = ++translationRequestId;
-  translationTitle.textContent = `PDF 第 ${pageNumber} 页 · 中文译文`;
-  translationState.textContent = "正在检查本地缓存…";
+  const previousTranslation = renderedTranslationPage === requestedPage
+    ? renderedTranslation
+    : null;
+  if (!previousTranslation) renderedTranslation = null;
+  renderedTranslationPage = requestedPage;
+  updateTranslationControls();
+  translationTitle.textContent = `PDF 第 ${requestedPage} 页 · 中文译文`;
+  translationState.textContent = previousTranslation
+    ? "正在刷新缓存状态…"
+    : "正在检查本地缓存…";
+  const controller = new AbortController();
+  translationStateController = controller;
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, 6000);
   try {
     const state = await translationApi(
-      `/api/translation/page?source_id=${encodeURIComponent(sourceId)}&page=${pageNumber}`
+      `/api/translation/page?source_id=${encodeURIComponent(sourceId)}&page=${requestedPage}`,
+      { signal: controller.signal }
     );
     if (requestId !== translationRequestId) return;
     if (state.translation) {
-      setTranslationPanel(true);
+      if (!translationPanelDismissed) setTranslationPanel(true);
       renderTranslation(state.translation, state.source_text, { preserveScroll });
     } else if (translationPanelOpen) {
       renderTranslation(null, state.source_text, { preserveScroll });
     }
   } catch (error) {
     if (requestId !== translationRequestId) return;
-    translationState.textContent = "缓存读取失败";
-    if (translationPanelOpen) {
+    if (error.name === "AbortError" && !timedOut) return;
+    translationState.textContent = timedOut
+      ? (previousTranslation ? "缓存检查超时 · 仍显示当前译文" : "缓存检查超时，可继续阅读 PDF")
+      : (previousTranslation ? "缓存刷新失败 · 仍显示当前译文" : "缓存读取失败");
+    if (translationPanelOpen && !previousTranslation) {
       translationContent.innerHTML = `<div class="translation-error"></div>`;
-      translationContent.firstElementChild.textContent = error.message;
+      translationContent.firstElementChild.textContent = timedOut
+        ? "缓存服务暂时没有响应，可稍后重新打开译文。"
+        : error.message;
     }
+  } finally {
+    clearTimeout(timeout);
+    if (translationStateController === controller) translationStateController = undefined;
   }
 }
 
 async function translateCurrentPage(force) {
   if (translationBusy || !sourceId || !readerToken) return;
   const requestedPage = pageNumber;
+  const previousTranslation = renderedTranslation;
+  const actionButton = force ? retranslatePageButton : translatePageButton;
+  const originalLabel = actionButton.textContent;
   translationBusy = true;
   setTranslationPanel(true);
-  translatePageButton.disabled = true;
-  translateAllButton.disabled = true;
-  retranslatePageButton.disabled = true;
-  translatePageButton.textContent = "正在翻译…";
+  updateTranslationControls();
+  actionButton.textContent = force ? "正在重译…" : "正在翻译…";
   translationTitle.textContent = `PDF 第 ${requestedPage} 页 · 中文译文`;
-  translationState.textContent = "Codex 正在结合页面文本与图像翻译…";
-  translationContent.innerHTML = '<div class="translation-loading">翻译当前物理页。完成后会自动保存到本机缓存。</div>';
+  translationState.textContent = force
+    ? `正在使用 ${retranslationModelSelect.value} / ${retranslationEffortSelect.value} 重新翻译…`
+    : "正在结合页面文本与图像翻译…";
+  if (force && previousTranslation) {
+    translationContent.classList.add("is-refreshing");
+  } else {
+    translationContent.innerHTML = '<div class="translation-loading">正在翻译当前物理页，完成后会自动保存到本机。</div>';
+  }
   try {
+    const payload = {
+      source_id: sourceId,
+      page: requestedPage,
+      force,
+      model: retranslationModelSelect.value,
+      reasoning_effort: retranslationEffortSelect.value
+    };
     const result = await translationApi("/api/translation/page", {
       method: "POST",
-      body: JSON.stringify({ source_id: sourceId, page: requestedPage, force })
+      body: JSON.stringify(payload)
     });
     if (requestedPage === pageNumber) renderTranslation(result);
   } catch (error) {
     if (requestedPage === pageNumber) {
-      translationState.textContent = "翻译失败，可重试";
-      translationContent.innerHTML = '<div class="translation-error"></div>';
-      translationContent.firstElementChild.textContent = error.message;
+      if (force && previousTranslation) {
+        translationState.textContent = "重译失败 · 仍显示上次缓存";
+        translationContent.classList.remove("is-refreshing");
+        showStatusHint(error.message);
+      } else {
+        translationState.textContent = "翻译失败，可重试";
+        translationContent.innerHTML = '<div class="translation-error"></div>';
+        translationContent.firstElementChild.textContent = error.message;
+      }
     }
   } finally {
     translationBusy = false;
-    translatePageButton.disabled = false;
-    translateAllButton.disabled = false;
-    retranslatePageButton.disabled = false;
-    translatePageButton.textContent = "翻译当前页";
+    actionButton.textContent = originalLabel;
+    updateTranslationControls();
   }
 }
 
@@ -610,8 +702,11 @@ function formatElapsed(milliseconds) {
 function renderFullTranslationStatus() {
   if (!fullTranslationStatusState) return;
   const { completed, total, current, currentPages, concurrency, failures, currentStartedAt, lastError, status } = fullTranslationStatusState;
-  const elapsed = currentStartedAt ? formatElapsed(Date.now() - currentStartedAt) : "00:00";
-  fullTranslationStatus.hidden = false;
+  const elapsed = fullTranslationRunning && currentStartedAt
+    ? formatElapsed(Date.now() - currentStartedAt)
+    : "00:00";
+  const completedAll = total > 0 && completed >= total && !fullTranslationRunning;
+  fullTranslationStatus.hidden = completedAll || (status === "idle" && !failures);
   fullTranslationMeter.max = Math.max(1, total);
   fullTranslationMeter.value = Math.min(total, completed);
   fullTranslationElapsed.textContent = elapsed;
@@ -629,10 +724,10 @@ function renderFullTranslationStatus() {
       : `正在分配首批页面 · 已确认缓存 ${completed}/${total}`;
   } else if (status === "stopped") {
     fullTranslationStatusTitle.textContent = "全文翻译已停止";
-    fullTranslationDetail.textContent = `已缓存 ${completed}/${total} 页；再次点击“翻译全文”将继续补齐。`;
+    fullTranslationDetail.textContent = `已缓存 ${completed}/${total} 页；点击“补齐全文”继续。`;
   } else if (status === "interrupted") {
     fullTranslationStatusTitle.textContent = "上次全文翻译已中断";
-    fullTranslationDetail.textContent = `已缓存 ${completed}/${total} 页；点击“继续全文”补齐剩余页面。`;
+    fullTranslationDetail.textContent = `已缓存 ${completed}/${total} 页；点击“补齐全文”继续。`;
   } else if (status === "idle") {
     fullTranslationStatusTitle.textContent = completed ? "全文翻译尚未完成" : "尚未开始全文翻译";
     fullTranslationDetail.textContent = `本地已缓存 ${completed}/${total} 页。`;
@@ -658,40 +753,64 @@ function applyFullTranslationJob(state) {
       : (Number(state.current_page) || 0),
     currentPages: Array.isArray(state.current_pages) ? state.current_pages : [],
     concurrency: Number(state.concurrency) || 8,
+    model: state.model || "",
+    reasoningEffort: state.reasoning_effort || "",
     failures: Number(state.failures) || 0,
     lastError: state.last_error || "",
     currentStartedAt: state.current_started_at ? Date.parse(state.current_started_at) : null
   };
-  fullTranslationProgress.hidden = false;
   if (fullTranslationRunning) {
+    fullTranslationProgress.hidden = false;
     fullTranslationProgress.textContent = `${fullTranslationStatusState.currentPages.length || 0}/${fullTranslationStatusState.concurrency} 路 · ${fullTranslationStatusState.completed}/${fullTranslationStatusState.total}${fullTranslationStatusState.current ? ` · 第 ${fullTranslationStatusState.current} 页` : ""}`;
     translateAllButton.textContent = status === "stopping" ? "停止中…" : "停止全文";
     translateAllButton.disabled = status === "stopping";
     translateAllButton.classList.add("is-running");
     translateAllButton.setAttribute("aria-busy", "true");
   } else {
+    const completedAll = fullTranslationStatusState.total > 0
+      && fullTranslationStatusState.completed >= fullTranslationStatusState.total;
+    fullTranslationProgress.hidden = completedAll;
     fullTranslationProgress.textContent = `${status === "completed" ? "已完成" : "已缓存"} ${fullTranslationStatusState.completed}/${fullTranslationStatusState.total}`;
-    translateAllButton.textContent = fullTranslationStatusState.completed ? "继续全文" : "翻译全文";
-    translateAllButton.disabled = false;
+    translateAllButton.textContent = completedAll
+      ? "全文已缓存"
+      : (fullTranslationStatusState.completed ? "补齐全文" : "翻译全文");
+    translateAllButton.disabled = completedAll;
     translateAllButton.classList.remove("is-running");
     translateAllButton.removeAttribute("aria-busy");
   }
-  translatePageButton.disabled = fullTranslationRunning;
-  retranslatePageButton.disabled = fullTranslationRunning;
+  updateTranslationControls();
   renderFullTranslationStatus();
 }
 
 async function refreshFullTranslationJob() {
-  if (!sourceId || !readerToken || !pdfDocument) return;
+  if (
+    !sourceId
+    || !readerToken
+    || !pdfDocument
+    || viewportElement.clientWidth <= 1
+    || viewportElement.clientHeight <= 1
+  ) return;
+  if (fullTranslationPollPromise) return;
+  const controller = new AbortController();
+  fullTranslationPollController = controller;
+  const timeout = setTimeout(() => controller.abort(), 5000);
+  fullTranslationPollPromise = translationApi(
+    `/api/translation/full?source_id=${encodeURIComponent(sourceId)}`,
+    { signal: controller.signal }
+  );
   try {
     const wasRunning = fullTranslationRunning;
-    const state = await translationApi(`/api/translation/full?source_id=${encodeURIComponent(sourceId)}`);
+    const state = await fullTranslationPollPromise;
     applyFullTranslationJob(state);
     if (wasRunning && !fullTranslationRunning && fullTranslationStatusState?.status === "completed" && translationPanelOpen) {
       loadTranslationState({ preserveScroll: true });
     }
   } catch (_) {
     // Page translation remains usable if a transient status poll fails.
+  } finally {
+    clearTimeout(timeout);
+    fullTranslationPollPromise = undefined;
+    if (fullTranslationPollController === controller) fullTranslationPollController = undefined;
   }
 }
 
@@ -742,7 +861,13 @@ async function translateAllPages(force = false) {
   try {
     applyFullTranslationJob(await translationApi("/api/translation/full/start", {
       method: "POST",
-      body: JSON.stringify({ source_id: sourceId, page: pageNumber, force })
+      body: JSON.stringify({
+        source_id: sourceId,
+        page: pageNumber,
+        force,
+        model: retranslationModelSelect.value,
+        reasoning_effort: retranslationEffortSelect.value
+      })
     }));
     setTimeout(refreshFullTranslationJob, 150);
     setTimeout(refreshFullTranslationJob, 600);
@@ -787,6 +912,60 @@ function resetTranslationWidth() {
   translationPanel.style.removeProperty("--translation-panel-width");
   updatePageLayouts();
   renderNearPage(pageNumber);
+}
+
+function beginPdfPan(event) {
+  if (event.pointerType !== "mouse" || event.button !== 0 || !event.isPrimary) return;
+  const bounds = viewportElement.getBoundingClientRect();
+  const scrollbarWidth = viewportElement.offsetWidth - viewportElement.clientWidth;
+  const scrollbarHeight = viewportElement.offsetHeight - viewportElement.clientHeight;
+  if (scrollbarWidth > 0 && event.clientX >= bounds.right - scrollbarWidth) return;
+  if (scrollbarHeight > 0 && event.clientY >= bounds.bottom - scrollbarHeight) return;
+  pdfPanState = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    scrollLeft: viewportElement.scrollLeft,
+    scrollTop: viewportElement.scrollTop,
+    dragging: false
+  };
+}
+
+function movePdfPan(event) {
+  if (!pdfPanState || event.pointerId !== pdfPanState.pointerId) return;
+  const deltaX = event.clientX - pdfPanState.startX;
+  const deltaY = event.clientY - pdfPanState.startY;
+  if (!pdfPanState.dragging && Math.hypot(deltaX, deltaY) < 4) return;
+  if (!pdfPanState.dragging) {
+    pdfPanState.dragging = true;
+    viewportElement.setPointerCapture(event.pointerId);
+    document.body.classList.add("pdf-panning");
+  }
+  event.preventDefault();
+  viewportElement.scrollLeft = pdfPanState.scrollLeft - deltaX;
+  viewportElement.scrollTop = pdfPanState.scrollTop - deltaY;
+}
+
+function finishPdfPan(event) {
+  if (!pdfPanState || event.pointerId !== pdfPanState.pointerId) return;
+  const dragged = pdfPanState.dragging;
+  if (viewportElement.hasPointerCapture(event.pointerId)) {
+    viewportElement.releasePointerCapture(event.pointerId);
+  }
+  pdfPanState = null;
+  document.body.classList.remove("pdf-panning");
+  if (dragged) {
+    suppressPdfClick = true;
+    setTimeout(() => { suppressPdfClick = false; }, 0);
+    scheduleCurrentPageDetection();
+  }
+}
+
+function suppressClickAfterPdfPan(event) {
+  if (!suppressPdfClick) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  suppressPdfClick = false;
 }
 
 function scaleFor(record) {
@@ -992,7 +1171,9 @@ function suspendPageDetectionUntilSettled(delay = 0) {
 
 function detectCurrentPage() {
   scrollFrame = null;
-  if (!pageRecords.length) return;
+  // The outer Reader hides this iframe while Q&A or FAQ is active. A zero-height
+  // viewport has no meaningful visible page and must not reset the position.
+  if (!pageRecords.length || viewportElement.clientHeight <= 1 || viewportElement.clientWidth <= 1) return;
   const viewportTop = viewportElement.scrollTop;
   const viewportBottom = viewportTop + viewportElement.clientHeight;
   let detected = pageNumber;
@@ -1086,20 +1267,63 @@ document.querySelector("#fit-width").addEventListener("click", () => {
   updatePageLayouts();
   scrollToPage(pageNumber);
 });
+translationToggleButton.addEventListener("click", () => {
+  if (translationPanelOpen) {
+    setTranslationPanel(false, true);
+    return;
+  }
+  translationPanelDismissed = false;
+  setTranslationPanel(true);
+  loadTranslationState();
+});
 translatePageButton.addEventListener("click", () => translateCurrentPage(false));
 translateAllButton.addEventListener("click", () => translateAllPages(false));
 retranslatePageButton.addEventListener("click", () => translateCurrentPage(true));
-closeTranslationButton.addEventListener("click", () => setTranslationPanel(false));
-showSourceToggle.addEventListener("change", () => {
-  localStorage.setItem(translationSourceKey, String(showSourceToggle.checked));
-  translationContent.querySelector(".translation-columns")?.classList.toggle("show-source", showSourceToggle.checked);
+closeTranslationButton.addEventListener("click", () => setTranslationPanel(false, true));
+retranslationModelSelect.addEventListener("change", () => {
+  localStorage.setItem(translationModelKey, retranslationModelSelect.value);
+});
+retranslationEffortSelect.addEventListener("change", () => {
+  localStorage.setItem(translationEffortKey, retranslationEffortSelect.value);
 });
 translationResizer.addEventListener("pointerdown", beginTranslationResize);
 translationResizer.addEventListener("dblclick", resetTranslationWidth);
+viewportElement.addEventListener("pointerdown", beginPdfPan);
+viewportElement.addEventListener("pointermove", movePdfPan);
+viewportElement.addEventListener("pointerup", finishPdfPan);
+viewportElement.addEventListener("pointercancel", finishPdfPan);
+viewportElement.addEventListener("click", suppressClickAfterPdfPan, true);
 viewportElement.addEventListener("scroll", scheduleCurrentPageDetection, { passive: true });
+let viewportVisible = viewportElement.clientWidth > 1 && viewportElement.clientHeight > 1;
+new ResizeObserver(() => {
+  const visible = viewportElement.clientWidth > 1 && viewportElement.clientHeight > 1;
+  if (visible === viewportVisible) return;
+  viewportVisible = visible;
+  pageDetectionSuspended = true;
+  pageDetectionGeneration += 1;
+  if (scrollFrame) cancelAnimationFrame(scrollFrame);
+  scrollFrame = null;
+  if (!visible) {
+    translationStateController?.abort();
+    fullTranslationPollController?.abort();
+    return;
+  }
+  if (!pdfDocument) return;
+  if (scaleMode === "fit") updatePageLayouts();
+  scrollToPage(pageNumber);
+  if (readerToken) {
+    loadTranslationState({ preserveScroll: true });
+    refreshFullTranslationJob();
+  }
+}).observe(viewportElement);
 window.addEventListener("resize", () => {
+  pageDetectionSuspended = true;
+  pageDetectionGeneration += 1;
+  if (scrollFrame) cancelAnimationFrame(scrollFrame);
+  scrollFrame = null;
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => {
+    if (viewportElement.clientHeight <= 1 || viewportElement.clientWidth <= 1) return;
     if (translationPanelOpen) {
       const saved = Number(localStorage.getItem(translationWidthKey));
       applyTranslationWidth(Number.isFinite(saved) && saved > 0 ? saved : translationPanel.getBoundingClientRect().width);
@@ -1107,6 +1331,8 @@ window.addEventListener("resize", () => {
     if (scaleMode === "fit") {
       updatePageLayouts();
       scrollToPage(pageNumber);
+    } else {
+      suspendPageDetectionUntilSettled();
     }
   }, 120);
 });
@@ -1123,6 +1349,7 @@ async function start() {
   }
   if (!/^[A-Za-z0-9._-]{1,128}$/.test(sourceId)) {
     showError("缺少可信 PDF 来源标识");
+    translationToggleButton.disabled = true;
     translatePageButton.disabled = true;
     translateAllButton.disabled = true;
     return;
@@ -1135,13 +1362,22 @@ async function start() {
     const bootstrap = await bootstrapResponse.json();
     readerToken = bootstrap.token;
   } catch (error) {
+    translationToggleButton.disabled = true;
+    translationToggleButton.title = "翻译服务未启动；请使用 ./serve.sh";
     translatePageButton.disabled = true;
     translatePageButton.title = "翻译服务未启动；请使用 ./serve.sh";
     translateAllButton.disabled = true;
     translateAllButton.title = "翻译服务未启动；请使用 ./serve.sh";
   }
   try {
-    showSourceToggle.checked = localStorage.getItem(translationSourceKey) === "true";
+    const savedModel = localStorage.getItem(translationModelKey)
+      || localStorage.getItem(legacyTranslationModelKey);
+    const savedEffort = localStorage.getItem(translationEffortKey)
+      || localStorage.getItem(legacyTranslationEffortKey);
+    retranslationModelSelect.value = revisionModels.has(savedModel) ? savedModel : "gpt-5.6-terra";
+    retranslationEffortSelect.value = revisionReasoningEfforts.has(savedEffort) ? savedEffort : "medium";
+    localStorage.setItem(translationModelKey, retranslationModelSelect.value);
+    localStorage.setItem(translationEffortKey, retranslationEffortSelect.value);
     pdfDocument = await pdfjsLib.getDocument({ url: fileUrl.href }).promise;
     pageCount.textContent = String(pdfDocument.numPages);
     pageInput.max = String(pdfDocument.numPages);
@@ -1149,6 +1385,7 @@ async function start() {
     const initialPage = pageNumber;
     await buildPageFlow();
     updateControls();
+    updateTranslationControls();
     if (scrollFrame) cancelAnimationFrame(scrollFrame);
     scrollFrame = null;
     scrollToPage(initialPage);

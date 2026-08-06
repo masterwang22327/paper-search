@@ -49,8 +49,13 @@
   font-weight: 600;
 }
 
+.knowledge-threadbar [data-action="delete-thread"] {
+  color: var(--md-accent-fg-color);
+}
+
 .knowledge-threadbar button:disabled,
 .knowledge-toolbar button:disabled,
+.knowledge-toolbar select:disabled,
 .knowledge-composer textarea:disabled {
   cursor: not-allowed;
   opacity: 0.55;
@@ -193,6 +198,21 @@
   margin: 0.8rem 0;
   overflow-x: auto;
   text-align: center;
+}
+
+/* Material's .arithmatex rules target block formulas. Reader also uses that
+   hook to ask MathJax to process inline spans, so undo the block sizing there. */
+.knowledge-rich-text .knowledge-math-inline {
+  display: inline;
+  margin: 0;
+  overflow: visible;
+}
+
+.knowledge-rich-text .knowledge-math-inline > mjx-container {
+  display: inline-block;
+  width: auto;
+  margin: 0 !important;
+  padding: 0;
 }
 
 .knowledge-markdown-table {
@@ -467,9 +487,80 @@
 
 .knowledge-toolbar {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   justify-content: space-between;
   gap: 0.45rem;
   margin-top: 0.35rem;
+}
+
+.knowledge-model-settings,
+.knowledge-toolbar-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.knowledge-model-settings {
+  flex: 1 1 13rem;
+}
+
+.knowledge-model-settings select {
+  min-width: 0;
+  height: 1.85rem;
+  padding: 0 1.65rem 0 0.4rem;
+  overflow: hidden;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 0.3rem;
+  color: var(--md-default-fg-color);
+  background: var(--md-default-bg-color);
+  font: inherit;
+  font-size: 0.66rem;
+  text-overflow: ellipsis;
+}
+
+.knowledge-model-settings [data-setting="knowledge-model"] {
+  flex: 1 1 8rem;
+}
+
+.knowledge-model-settings [data-setting="knowledge-effort"] {
+  width: 6.5rem;
+  flex: none;
+}
+
+.knowledge-toolbar-actions {
+  flex: none;
+  margin-left: auto;
+}
+
+@media screen and (max-width: 50rem) {
+  .knowledge-toolbar {
+    align-items: stretch;
+  }
+
+  .knowledge-model-settings,
+  .knowledge-toolbar-actions {
+    width: 100%;
+    flex-basis: 100%;
+    margin-left: 0;
+  }
+
+  .knowledge-model-settings {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .knowledge-model-settings [data-setting="knowledge-model"],
+  .knowledge-model-settings [data-setting="knowledge-effort"] {
+    width: 100%;
+    flex: none;
+  }
+
+  .knowledge-toolbar-actions button {
+    min-width: 0;
+    flex: 1;
+  }
 }
 
 .knowledge-toolbar button:last-child,

@@ -81,10 +81,6 @@ body.reader-nav-collapsed .md-content__inner {
   text-wrap: pretty;
 }
 
-.reader-research-page .md-sidebar--secondary {
-  display: none;
-}
-
 .reader-research-page:not(.evidence-panel-open) .md-content__inner {
   max-width: 46rem;
 }
@@ -758,6 +754,7 @@ body.reader-nav-collapsed .md-content__inner {
     margin-left: 0;
     background: transparent;
     padding-left: 0;
+    white-space: normal;
   }
 
   .paper-reading-card__topline > .evidence-panel-toggle {
@@ -879,8 +876,8 @@ body.reader-nav-collapsed .md-content__inner {
 
 .evidence-panel {
   position: fixed;
-  z-index: 3;
-  top: 2.4rem;
+  z-index: 5;
+  top: 0;
   right: 0;
   bottom: 0;
   width: var(--evidence-panel-width);
@@ -893,6 +890,12 @@ body.reader-nav-collapsed .md-content__inner {
 
 body.evidence-panel-open .evidence-panel {
   display: flex;
+}
+
+/* Evidence mode is a focused workspace. The site header duplicates search and
+   navigation controls that are available again as soon as the panel closes. */
+body.evidence-panel-open .md-header {
+  display: none;
 }
 
 body.evidence-panel-open .md-grid {
@@ -1029,9 +1032,9 @@ body.evidence-panel-resizing .evidence-panel__resizer::after {
 .evidence-panel__header {
   display: flex;
   align-items: center;
-  min-height: 3.25rem;
-  gap: 0.65rem;
-  padding: 0.55rem 0.8rem;
+  min-height: 2.4rem;
+  gap: 0.45rem;
+  padding: 0.28rem 0.65rem;
   border-bottom: 1px solid var(--md-default-fg-color--lightest);
 }
 
@@ -1048,17 +1051,19 @@ body.evidence-panel-resizing .evidence-panel__resizer::after {
 }
 
 .evidence-panel__title {
+  font-size: 0.75rem;
   font-weight: 700;
 }
 
 .evidence-panel__meta {
   color: var(--md-default-fg-color--light);
-  font-size: 0.68rem;
+  font-size: 0.6rem;
+  line-height: 1.25;
 }
 
 .evidence-panel__button {
   flex: none;
-  padding: 0.35rem 0.5rem;
+  padding: 0.25rem 0.4rem;
   border: 0;
   border-radius: 0.25rem;
   color: var(--md-default-fg-color--light);
@@ -1081,7 +1086,7 @@ body.evidence-panel-resizing .evidence-panel__resizer::after {
 .evidence-panel__tabs {
   display: flex;
   flex: none;
-  height: 2.55rem;
+  height: 2rem;
   border-bottom: 1px solid var(--md-default-fg-color--lightest);
 }
 
@@ -1091,6 +1096,7 @@ body.evidence-panel-resizing .evidence-panel__resizer::after {
   border-bottom: 2px solid transparent;
   color: var(--md-default-fg-color--light);
   background: transparent;
+  font-size: 0.65rem;
   cursor: pointer;
 }
 
@@ -1173,7 +1179,7 @@ body.evidence-panel-available:not(.evidence-panel-open) .evidence-panel-toggle {
   }
 
   .evidence-panel {
-    top: 2.4rem;
+    top: 0;
     width: var(--evidence-panel-width);
   }
 

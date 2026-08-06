@@ -428,7 +428,10 @@ def reading_card(card: dict[str, str], learning: dict | None = None) -> str:
         f'<div class="paper-reading-card__facts">{fact_html}</div>'
         '<div class="paper-reading-card__actions">'
         '<article><span class="paper-reading-card__label">对你的价值</span>'
-        f'<p>{escaped["value"]}</p></article></div>'
+        f'<p>{escaped["value"]}</p></article>'
+        '<article><span class="paper-reading-card__label">阅读方法与前置</span>'
+        f'<p>{escaped["strategy"]}</p>'
+        f'<p><strong>前置：</strong>{escaped["prerequisites"]}</p></article></div>'
         '</div></details>'
         '</section>'
     )

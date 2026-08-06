@@ -13,7 +13,7 @@ cd /path/to/paper_search/reader
 
 专题精读在桌面宽屏下会自动显示右侧固定论文 PDF。点击正文中带 `PDF` 标记的页码引用，右侧面板会切换到对应论文和物理页；按住 Command/Ctrl 点击则保留普通链接行为，在新标签页打开。
 
-PDF 工具栏支持“翻译当前页”和“翻译全文”。全文翻译只处理未缓存页面；译文面板中的“重译当前页”会忽略当前页缓存并重新调用一次翻译 API。翻译按物理页直接调用无状态 Responses API，不创建或续接 Codex Session；跨页一致性由本地 glossary 和相邻页摘录提供。译文与同一页原 PDF 左右对照，可拖动调整两栏宽度、显示提取原文进行核对；译文块使用“正文第 1 段”等自然标签，点击块会回查对应 PDF 页，并优先通过 PDF 文本层匹配原文区域。缓存位于 `user-data/<TASK_ID>/translations/`。左侧项目栏可通过页面左上方的 `‹/›` 按钮收起或展开，状态会在浏览器本地保存。
+PDF 阅读器顶部只保留“译文”开关；打开右侧译文栏后，可分别翻译本页、后台补齐全文和查看全文缓存状态。全文翻译只处理未缓存页面，全部缓存后按钮会变为“全文已缓存”并停止重复启动任务。“重新翻译”允许选择 `gpt-5.6-terra` 或 `gpt-5.6-sol`，以及 `medium/high/xhigh/max/ultra` 推理强度，选择保存在当前浏览器。翻译按物理页直接调用无状态 Responses API，不创建或续接 Codex Session；跨页一致性由本地 glossary 和相邻页摘录提供。译文块使用“正文第 1 段”等自然标签，点击块会回查对应 PDF 页，将匹配区域置于 PDF 视口中央；放大后可按住 PDF 内容拖拽平移视图。知识问答运行时不会持有 PDF/翻译共用的长时锁；PDF 标签隐藏后暂停状态轮询，恢复时保持原页码并重新检查当前页缓存。缓存位于 `user-data/<TASK_ID>/translations/`。左侧项目栏可通过页面左上方的 `‹/›` 按钮收起或展开，状态会在浏览器本地保存。
 
 右侧使用固定在 `reader/content/vendor/` 的本地 PDF.js，不依赖浏览器内置 PDF Viewer。MathJax 与字体同样已本地化，阅读时不会向 CDN 请求资源。
 
@@ -53,12 +53,13 @@ user-data/<TASK_ID>/
 `user-data/` 已被 Git 忽略，也不会进入生成站点。原始 `tasks/` 文件始终只读。
 
 翻译默认使用 `https://www.sevnx.one/v1/responses`、`gpt-5.6-terra` 和 `medium` reasoning effort。
-“重译当前页”会忽略缓存，改用 `gpt-5.6-sol` 和 `high`。翻译采用文本层确定覆盖范围、页面图像校准
+重新翻译会忽略缓存，默认使用 `gpt-5.6-sol` 和 `high`；也可在译文栏切换到允许的模型与推理强度。翻译采用文本层确定覆盖范围、页面图像校准
 公式与版面的双源流程，并在保存前复核易错数学符号。
 
-第三方翻译端点必须显式配置它自己的 `READER_TRANSLATION_API_KEY`。Reader 不会把通用
-`OPENAI_API_KEY` 或本机 Codex `auth.json` 中的密钥发送给第三方域名；只有当
-`READER_TRANSLATION_API_URL=https://api.openai.com/v1/responses` 时，才允许回退读取 OpenAI 凭据。
+当 Reader 的 Responses URL 与本机 Codex 当前 provider 的 `base_url + /responses` 精确匹配时，
+Reader 会复用 Codex `auth.json` 中的 `OPENAI_API_KEY`。端点不匹配时不会转发该凭据，必须显式配置
+目标端点自己的 `READER_TRANSLATION_API_KEY`。当 URL 为 `https://api.openai.com/v1/responses` 时，
+也允许回退读取 `OPENAI_API_KEY` 或 Codex API Key。
 密钥只存在于进程环境和请求头，不写入 Reader 文件。不要把密钥直接写进命令历史、README、配置文件
 或 Git remote URL。
 

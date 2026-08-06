@@ -13,7 +13,10 @@
   let sessionLabel;
   let threadSelect;
   let archiveThreadButton;
+  let deleteThreadButton;
   let newThreadButton;
+  let knowledgeModelSelect;
+  let knowledgeEffortSelect;
   let selectionMenu;
   let selectionNotice;
   let faqSearchInput;
@@ -29,6 +32,9 @@
   let pendingFaq = null;
   let revisions = [];
   let revisionSettings = { model: "gpt-5.6-terra", effort: "medium" };
+  let knowledgeSettings = { model: "gpt-5.6-terra", effort: "medium" };
+  let knowledgeSettingsSave = Promise.resolve();
+  let knowledgeSettingsVersion = 0;
   let revisionDiscussions = [];
   let shouldRevealLatestMessage = false;
 
@@ -73,6 +79,7 @@
       '    <select data-action="select-thread" aria-label="选择 Codex 对话"></select>',
       '    <div class="knowledge-session">尚未建立 Codex 会话</div>',
       '    <button type="button" data-action="archive-thread" title="将当前对话保存为只读历史">归档</button>',
+      '    <button type="button" data-action="delete-thread" title="永久删除当前对话及其消息">删除</button>',
       '    <button type="button" data-action="new-thread" title="开启独立的 Codex 对话">+ 新建</button>',
       '  </div>',
       '  <div class="knowledge-messages" aria-live="polite"></div>',
@@ -80,8 +87,14 @@
       '  <div class="knowledge-composer">',
       '    <textarea placeholder="针对当前文档提问。可先在正文中选中文字加入上下文。"></textarea>',
       '    <div class="knowledge-toolbar">',
-      '      <button type="button" data-action="add-pdf" title="把当前物理页渲染为图像并交给 Codex 观察">加入当前 PDF 页图像</button>',
-      '      <button type="button" data-action="send">发送问题</button>',
+      '      <div class="knowledge-model-settings">',
+      '        <select data-setting="knowledge-model" aria-label="知识问答模型" title="知识问答模型"><option value="gpt-5.6-terra">gpt-5.6-terra</option><option value="gpt-5.6-sol">gpt-5.6-sol</option></select>',
+      '        <select data-setting="knowledge-effort" aria-label="知识问答推理强度" title="知识问答推理强度"><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option><option value="max">max</option><option value="ultra">ultra</option></select>',
+      "      </div>",
+      '      <div class="knowledge-toolbar-actions">',
+      '        <button type="button" data-action="add-pdf" title="把当前物理页渲染为图像并交给 Codex 观察">加入当前 PDF 页图像</button>',
+      '        <button type="button" data-action="send">发送问题</button>',
+      "      </div>",
       "    </div>",
       "  </div>",
       "</section>"
@@ -95,7 +108,10 @@
     sessionLabel = assistantPane.querySelector(".knowledge-session");
     threadSelect = assistantPane.querySelector('[data-action="select-thread"]');
     archiveThreadButton = assistantPane.querySelector('[data-action="archive-thread"]');
+    deleteThreadButton = assistantPane.querySelector('[data-action="delete-thread"]');
     newThreadButton = assistantPane.querySelector('[data-action="new-thread"]');
+    knowledgeModelSelect = assistantPane.querySelector('[data-setting="knowledge-model"]');
+    knowledgeEffortSelect = assistantPane.querySelector('[data-setting="knowledge-effort"]');
     messageList = assistantPane.querySelector(".knowledge-messages");
     contextList = assistantPane.querySelector(".knowledge-contexts");
     questionInput = assistantPane.querySelector("textarea");
@@ -109,7 +125,10 @@
     assistantPane.querySelector('[data-action="add-pdf"]').addEventListener("click", addPdfContext);
     threadSelect.addEventListener("change", () => selectChatThread(threadSelect.value));
     archiveThreadButton.addEventListener("click", archiveCurrentThread);
+    deleteThreadButton.addEventListener("click", deleteCurrentThread);
     newThreadButton.addEventListener("click", createNewThread);
+    knowledgeModelSelect.addEventListener("change", queueKnowledgeSettingsSave);
+    knowledgeEffortSelect.addEventListener("change", queueKnowledgeSettingsSave);
     questionInput.addEventListener("keydown", event => {
       if ((event.metaKey || event.ctrlKey) && event.key === "Enter") sendQuestion();
     });
@@ -258,7 +277,7 @@
         node.textContent = token.slice(1, -1);
       } else {
         node = document.createElement("span");
-        node.className = "arithmatex";
+        node.className = "arithmatex knowledge-math-inline";
         node.textContent = token;
       }
       container.appendChild(node);
@@ -1332,6 +1351,44 @@
     return chatThreads.find(thread => thread.id === selectedThreadId) || null;
   }
 
+  function applyKnowledgeSettings(value) {
+    if (!value || !knowledgeModelSelect || !knowledgeEffortSelect) return;
+    const model = ["gpt-5.6-terra", "gpt-5.6-sol"].includes(value.model)
+      ? value.model
+      : "gpt-5.6-terra";
+    const effort = ["medium", "high", "xhigh", "max", "ultra"].includes(value.effort)
+      ? value.effort
+      : "medium";
+    knowledgeSettings = { model, effort };
+    knowledgeModelSelect.value = model;
+    knowledgeEffortSelect.value = effort;
+  }
+
+  function queueKnowledgeSettingsSave() {
+    const requested = {
+      model: knowledgeModelSelect.value,
+      effort: knowledgeEffortSelect.value
+    };
+    const version = ++knowledgeSettingsVersion;
+    knowledgeSettingsSave = knowledgeSettingsSave
+      .catch(() => undefined)
+      .then(() => api("/api/chat/settings", {
+        method: "POST",
+        body: JSON.stringify({ document_id: documentId, ...requested })
+      }))
+      .then(saved => {
+        knowledgeSettings = { model: saved.model, effort: saved.effort };
+        if (version === knowledgeSettingsVersion) applyKnowledgeSettings(saved);
+      })
+      .catch(error => {
+        if (version === knowledgeSettingsVersion) {
+          applyKnowledgeSettings(knowledgeSettings);
+          sessionLabel.textContent = error.message;
+        }
+      });
+    return knowledgeSettingsSave;
+  }
+
   function renderThreadControls() {
     threadSelect.innerHTML = "";
     if (!chatThreads.length) {
@@ -1352,9 +1409,13 @@
     const writable = Boolean(current && current.id === activeThreadId && current.status !== "archived");
     archiveThreadButton.disabled = !writable;
     archiveThreadButton.hidden = !current;
+    deleteThreadButton.disabled = !current;
+    deleteThreadButton.hidden = !current;
     questionInput.disabled = !writable;
     assistantPane.querySelector('[data-action="send"]').disabled = !writable;
     assistantPane.querySelector('[data-action="add-pdf"]').disabled = !writable;
+    knowledgeModelSelect.disabled = !writable;
+    knowledgeEffortSelect.disabled = !writable;
     questionInput.placeholder = writable
       ? "针对当前文档提问。可先在正文中选中文字加入上下文。"
       : "该对话已归档，只能查看历史；请新建对话后继续提问。";
@@ -1392,6 +1453,9 @@
     renderRevisions(state.revisions?.items || []);
     if (state.revision_settings?.model && state.revision_settings?.effort) {
       revisionSettings = state.revision_settings;
+    }
+    if (state.knowledge_settings?.model && state.knowledge_settings?.effort) {
+      applyKnowledgeSettings(state.knowledge_settings);
     }
     revisionDiscussions = state.revision_discussions?.items || [];
   }
@@ -1442,6 +1506,28 @@
         body: JSON.stringify({ document_id: documentId, thread_id: current.id })
       });
       currentSessionId = current.session_id || null;
+      applyChatState(state);
+    } catch (error) {
+      sessionLabel.textContent = error.message;
+      renderThreadControls();
+    }
+  }
+
+  async function deleteCurrentThread() {
+    const current = selectedThread();
+    if (!current) return;
+    const title = current.title || "当前对话";
+    if (!window.confirm(`确定永久删除“${title}”吗？\n\n该 Session 的全部问题、回答和上下文都会被删除，且无法恢复。`)) return;
+    deleteThreadButton.disabled = true;
+    try {
+      const state = await api("/api/chat/delete", {
+        method: "POST",
+        body: JSON.stringify({ document_id: documentId, thread_id: current.id })
+      });
+      currentSessionId = state.thread?.session_id || null;
+      contexts = [];
+      pdfContexts = [];
+      renderContexts();
       applyChatState(state);
     } catch (error) {
       sessionLabel.textContent = error.message;
@@ -1577,7 +1663,10 @@
     assistantPane.querySelector('[data-action="send"]').disabled = busy;
     threadSelect.disabled = busy;
     archiveThreadButton.disabled = busy;
+    deleteThreadButton.disabled = busy;
     newThreadButton.disabled = busy;
+    knowledgeModelSelect.disabled = busy;
+    knowledgeEffortSelect.disabled = busy;
     if (label) sessionLabel.textContent = label;
   }
 
@@ -1614,6 +1703,7 @@
     pendingElement.classList.add("is-pending");
     setBusy(true, "回答中…");
     try {
+      await knowledgeSettingsSave;
       const result = await api("/api/ask", {
         method: "POST",
         body: JSON.stringify({
@@ -1622,7 +1712,9 @@
           thread_id: selectedThreadId,
           question,
           contexts: sentContexts,
-          pdf_contexts: sentPdfContexts
+          pdf_contexts: sentPdfContexts,
+          model: knowledgeModelSelect.value,
+          effort: knowledgeEffortSelect.value
         })
       });
       pendingElement.classList.remove("is-pending");
@@ -1633,6 +1725,7 @@
       selectedThreadId = result.thread_id || selectedThreadId;
       if (Array.isArray(result.threads)) chatThreads = result.threads;
       currentSessionId = result.session_id;
+      if (result.knowledge_settings) applyKnowledgeSettings(result.knowledge_settings);
       renderThreadControls();
       restoreSessionLabel();
       requestAnimationFrame(() => revealMessage(messageList.lastElementChild, "smooth"));

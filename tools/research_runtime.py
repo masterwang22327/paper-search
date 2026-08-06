@@ -1001,7 +1001,7 @@ def build_parser() -> argparse.ArgumentParser:
     close_parser.add_argument(
         "--reason",
         required=True,
-        choices=("STOP_GOAL_TOKENS", "STOP_USER"),
+        choices=("STOP_COMPLETE", "STOP_GOAL_TOKENS", "STOP_USER"),
     )
     close_parser.set_defaults(handler=close_run)
 

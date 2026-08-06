@@ -46,8 +46,8 @@ def run() -> None:
         titles,
         admitted_files=admitted,
     )
-    assert len(production_papers) == 59
-    assert len(admitted) == len(route) == len(explicit_cards) == 56
+    assert len(production_papers) == 67
+    assert len(admitted) == len(route) == len(explicit_cards) == 64
     assert len(cards) == len(production_papers)
     assert set(candidates) == {
         "agentic-rl-next-directions.md",
@@ -56,17 +56,24 @@ def run() -> None:
     }
     assert "evaluator-judge-validity-cua.md" in admitted
     assert "async-staleness-rolloutpipe.md" in admitted
-    assert sum(len(stage["papers"]) for stage in stages) == 56
+    assert sum(len(stage["papers"]) for stage in stages) == 64
     positions = {filename: context["overall_index"] for filename, context in route.items()}
     assert positions["pretransformer-gpt-lineage.md"] < positions["contextual-representations-finetuning.md"]
     assert positions["tokenization-data-curation.md"] < positions["arxiv-1810.04805.md"]
     assert positions["evaluation-effective-context.md"] < positions["evaluator-judge-validity-cua.md"]
     assert positions["dpr-dense-retrieval.md"] < positions["embedding-models-lineage-selection.md"]
+    assert positions["reasoning-rl-reductions.md"] < positions["multimodal-llm-vision-language-abi.md"]
+    assert positions["instruction-cot-self-consistency.md"] < positions["reward-verifier-policy-learning.md"]
+    assert positions["reward-verifier-policy-learning.md"] < positions["preference-reward-overoptimization.md"]
+    assert positions["multimodal-llm-vision-language-abi.md"] < positions["tool-use-function-calling-abi.md"]
+    assert positions["tool-use-function-calling-abi.md"] < positions["agent-runtime-prompt-injection-security.md"]
+    assert positions["scalable-oversight-control-evaluation.md"] < positions["mechanistic-interpretability-causal-intervention.md"]
+    assert positions["code-embedding-retrieval.md"] < positions["code-generation-software-engineering-agents.md"]
     assert route["decoding.md"]["next"]["file"] == "tokenization-data-curation.md"
     assert route["tokenization-data-curation.md"]["previous"]["file"] == "decoding.md"
     assert all(stage["entry"] and stage["outcome"] and stage["checkpoint"] for stage in stages)
     guide_route = prepare_docs.learning_path_markdown(stages)
-    assert guide_route.count('<section class="learning-stage"') == 11
+    assert guide_route.count('<section class="learning-stage"') == 14
     assert "主干 · 阶段" in guide_route and "选读分支 · 阶段" in guide_route
     assert "进入前" in guide_route and "读完后" in guide_route and "阶段检查" in guide_route
 
@@ -111,6 +118,7 @@ def run() -> None:
         assert "这篇先回答" in with_card
         assert "按你的知识画像先补什么" in with_card
         assert "第一遍只做" in with_card
+        assert "阅读方法与前置" in with_card
         assert "test-prerequisites" in with_card
         assert "test-strategy" in with_card
         assert "test-problem" in with_card

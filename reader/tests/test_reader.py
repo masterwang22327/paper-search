@@ -48,6 +48,13 @@ def run() -> None:
         raise RuntimeError("Google Chrome or Microsoft Edge is required for the UI test")
 
     subprocess.run([str(READER_DIR / "build.sh"), TASK_ID], cwd=READER_DIR, check=True)
+    concept_images = READER_DIR / "site" / "images" / "modern-transformer-block"
+    for filename in (
+        "preln-postln-icml2020-fig1.png",
+        "gqa-head-sharing-emnlp2023-fig2.png",
+        "sliding-window-mistral2023-fig1.png",
+    ):
+        assert (concept_images / filename).is_file(), filename
     port = free_port()
     server = subprocess.Popen(
         [sys.executable, "-m", "http.server", str(port), "--bind", "127.0.0.1", "--directory", "site"],
@@ -106,13 +113,18 @@ def run() -> None:
                     }]},
                     revisions: {items: __REVISION_ITEMS__},
                     revision_settings: {model: "gpt-5.6-terra", effort: "medium"},
+                    knowledge_settings: {model: "gpt-5.6-terra", effort: "medium"},
                     revision_discussions: {items: []}
                   };
+                  window.__knowledgeAskRequests = [];
+                  window.__knowledgeSettingsRequests = [];
                   window.__translationTestState = {};
                   window.__translationPostCalls = [];
+                  window.__translationFullStartCalls = [];
                   window.__translationFullState = {
                     status: "idle", completed: 0, total: 15, current_pages: [], concurrency: 8, failures: 0
                   };
+                  window.__translationFullMetrics = {count: 0, active: 0, maxActive: 0, delay: 0};
                   const json = value => Promise.resolve(new Response(JSON.stringify(value), {
                     status: 200,
                     headers: {"Content-Type": "application/json"}
@@ -152,6 +164,15 @@ def run() -> None:
                         messages: []
                       });
                     }
+                    if (url === "/api/chat/settings") {
+                      const request = JSON.parse(init.body);
+                      window.__knowledgeSettingsRequests.push(request);
+                      window.__faqTestState.knowledge_settings = {
+                        model: request.model,
+                        effort: request.effort
+                      };
+                      return json(window.__faqTestState.knowledge_settings);
+                    }
                     if (url === "/api/faq/delete") {
                       window.__faqTestState.faq = {items: []};
                       return json(window.__faqTestState.faq);
@@ -180,6 +201,7 @@ def run() -> None:
                     }
                     if (url === "/api/ask") {
                       const request = JSON.parse(init.body);
+                      window.__knowledgeAskRequests.push(request);
                       const user = {
                         id: "asked-user",
                         role: "user",
@@ -197,14 +219,26 @@ def run() -> None:
                           active_thread_id: request.thread_id,
                           session_id: "11111111-2222-4333-8444-555555555555",
                           threads: window.__faqTestState.threads,
+                          knowledge_settings: window.__faqTestState.knowledge_settings,
                           messages: [user, assistant]
                         }), {status: 200, headers: {"Content-Type": "application/json"}}));
                       }, 1_500));
                     }
                     if (url.startsWith("/api/translation/full?") && (!init || !init.method || init.method === "GET")) {
-                      return json(window.__translationFullState);
+                      const metrics = window.__translationFullMetrics;
+                      metrics.count += 1;
+                      metrics.active += 1;
+                      metrics.maxActive = Math.max(metrics.maxActive, metrics.active);
+                      return new Promise(resolve => setTimeout(() => {
+                        metrics.active -= 1;
+                        resolve(new Response(JSON.stringify(window.__translationFullState), {
+                          status: 200,
+                          headers: {"Content-Type": "application/json"}
+                        }));
+                      }, metrics.delay));
                     }
                     if (url === "/api/translation/full/start") {
+                      window.__translationFullStartCalls.push(JSON.parse(init.body));
                       const completed = Object.keys(window.__translationTestState).length;
                       window.__translationFullState = completed >= 15
                         ? {status: "completed", completed: 15, total: 15, current_pages: [], concurrency: 8, failures: 0}
@@ -230,7 +264,7 @@ def run() -> None:
                     }
                     if (url === "/api/translation/page") {
                       const request = JSON.parse(init.body);
-                      window.__translationPostCalls.push(request.page);
+                      window.__translationPostCalls.push(request);
                         return new Promise(resolve => setTimeout(() => {
                           const translated = {
                           source_id: request.source_id,
@@ -245,7 +279,8 @@ def run() -> None:
                               original_text: `Source text for page ${request.page}`,
                               translation: `第 ${request.page} 页模拟中文译文`,
                               confidence: "high",
-                              bbox: null,
+                              bbox: [260, 350, 350, 450],
+                              location_match: "visual-text-exact",
                               refs: []
                             }, {
                               id: `p${String(request.page).padStart(4, "0")}-t001`,
@@ -282,6 +317,8 @@ def run() -> None:
                             }],
                             warnings: [],
                           visual_input: true,
+                          translation_model: request.model || "gpt-5.6-terra",
+                          translation_reasoning_effort: request.reasoning_effort || "medium",
                           translated_at: "2026-07-20T00:00:00+08:00"
                         };
                         window.__translationTestState[request.page] = translated;
@@ -300,11 +337,11 @@ def run() -> None:
             )
 
             page.goto(f"{base_url}/reading-guide/", wait_until="networkidle")
-            expect(page.locator(".learning-stage")).to_have_count(11)
+            expect(page.locator(".learning-stage")).to_have_count(14)
             expect(page.locator(".learning-stage").first).to_contain_text("进入前")
             expect(page.locator(".learning-stage").first).to_contain_text("读完后")
             expect(page.locator(".learning-stage").first).to_contain_text("阶段检查")
-            expect(page.locator(".learning-stage__papers > li")).to_have_count(56)
+            expect(page.locator(".learning-stage__papers > li")).to_have_count(64)
 
             page.set_viewport_size({"width": 390, "height": 844})
             page.goto(f"{base_url}/papers/tokenization-data-curation/", wait_until="networkidle")
@@ -336,6 +373,252 @@ def run() -> None:
             assert mobile_layout["footerWidth"] >= mobile_layout["cardWidth"] * 0.85, mobile_layout
             assert mobile_layout["navBelowCopy"], mobile_layout
             assert mobile_layout["pdfDoesNotCoverDetails"], mobile_layout
+
+            page.goto(f"{base_url}/papers/modern-transformer-block/", wait_until="networkidle")
+            expect(page.locator("body")).to_have_class(re.compile(r"reader-modern-transformer-page"))
+            expect(page.locator(".paper-reading-card__overview")).not_to_be_visible()
+            expect(page.locator(".paper-reading-card__first-pass")).not_to_be_visible()
+            expect(page.locator(".modern-block-brief__prerequisites")).to_be_visible()
+            expect(page.locator("article h1")).to_contain_text("现代 Transformer Block 的演进")
+            expect(page.locator(".modern-block-evolution")).to_be_visible()
+            narrative_structure = page.evaluate(
+                """() => {
+                  const evolution = document.querySelector('.modern-block-evolution');
+                  const blockMap = document.querySelector('.modern-block-map');
+                  const headings = [...document.querySelectorAll('article h2, article h3')]
+                    .map((heading) => ({tag: heading.tagName, text: heading.textContent.trim()}));
+                  const indexOf = (needle) => headings.findIndex((heading) =>
+                    heading.text.includes(needle));
+                  return {
+                    evolutionBeforePlugin: Boolean(
+                      evolution.compareDocumentPosition(blockMap)
+                        & Node.DOCUMENT_POSITION_FOLLOWING
+                    ),
+                    firstH2: headings.find((heading) => heading.tag === 'H2')?.text || '',
+                    roleRows: document.querySelectorAll('.paper-role-table-wrap tbody tr').length,
+                    shapeHeading: headings.find((heading) => heading.text.includes('固定 shape')),
+                    baseline: indexOf('固定共同基线'),
+                    normPath: indexOf('路径一：'),
+                    ffnPath: indexOf('路径二：'),
+                    positionPath: indexOf('路径三：'),
+                    kvPath: indexOf('路径四：'),
+                    recipe: indexOf('回到现代配方'),
+                    secondPass: indexOf('第二遍选读：更大规模'),
+                    residual: indexOf('Residual：'),
+                    layerNorm: indexOf('LayerNorm 与 RMSNorm'),
+                    preLn: indexOf('Pre-LN 与 Post-LN')
+                  };
+                }"""
+            )
+            assert narrative_structure["evolutionBeforePlugin"], narrative_structure
+            assert "全篇全览" in narrative_structure["firstH2"], narrative_structure
+            assert narrative_structure["roleRows"] == 9, narrative_structure
+            assert narrative_structure["shapeHeading"]["tag"] == "H3", narrative_structure
+            assert (
+                narrative_structure["baseline"]
+                < narrative_structure["normPath"]
+                < narrative_structure["ffnPath"]
+                < narrative_structure["positionPath"]
+                < narrative_structure["kvPath"]
+                < narrative_structure["recipe"]
+                < narrative_structure["secondPass"]
+            ), narrative_structure
+            assert (
+                narrative_structure["residual"]
+                < narrative_structure["layerNorm"]
+                < narrative_structure["preLn"]
+            ), narrative_structure
+            page.locator('[data-block-node="attention"]').click()
+            expect(page.locator("[data-block-readout-title]")).to_contain_text("跨位置读取历史")
+
+            attention_lab = page.locator(".attention-head-lab")
+            expect(attention_lab).to_be_visible()
+            expect(page.locator("[data-attention-mode-label]")).to_have_text("GQA · 8:2")
+            expect(page.locator("[data-attention-cache]")).to_have_text("64 MiB")
+            expect(page.locator("[data-attention-scores]")).to_have_text("32,768")
+            page.locator('[data-attention-q-strip] [data-head="7"]').click()
+            expect(page.locator("[data-attention-selected-map]")).to_have_text("Q7 → KV1")
+            expect(page.locator("[data-attention-selected-query]")).to_have_class(
+                re.compile(r"is-selected-group")
+            )
+            expect(page.locator("[data-attention-selected-kv]")).to_have_class(
+                re.compile(r"is-selected-group")
+            )
+            expect(page.locator('[data-attention-q-strip] .is-group-peer')).to_have_count(4)
+
+            page.locator('[data-attention-preset="mha"]').click()
+            expect(page.locator("[data-attention-cache]")).to_have_text("256 MiB")
+            expect(page.locator("[data-attention-scores]")).to_have_text("32,768")
+            page.locator('[data-attention-preset="mqa"]').click()
+            expect(page.locator("[data-attention-cache]")).to_have_text("32 MiB")
+            expect(page.locator("[data-attention-scores]")).to_have_text("32,768")
+            page.locator('[data-attention-preset="gqa"]').click()
+            page.locator('[data-attention-control="query-heads"] [data-value="32"]').click()
+            expect(page.locator("[data-attention-mode-label]")).to_have_text("GQA · 32:8")
+            expect(page.locator('[data-attention-control="kv-heads"] button')).to_have_count(6)
+            expect(page.locator("[data-attention-cache]")).to_have_text("256 MiB")
+            expect(page.locator("[data-attention-scores]")).to_have_text("131,072")
+            page.locator(".attention-head-lab__advanced").evaluate("element => element.open = true")
+            page.locator('[data-attention-input="context-index"]').evaluate(
+                """element => {
+                  element.value = "4";
+                  element.dispatchEvent(new Event("input", {bubbles: true}));
+                }"""
+            )
+            expect(page.locator('[data-attention-output="context"]')).to_have_text("8,192")
+            expect(page.locator("[data-attention-cache]")).to_have_text("512 MiB")
+
+            expect(page.locator("[data-reader-widget]")).to_have_count(7)
+            page.locator('[data-lifecycle-mode="train"]').click()
+            expect(page.locator("[data-lifecycle-persist-label]")).to_have_text("跨 training step 保留")
+            expect(page.locator("[data-lifecycle-persist]")).to_contain_text("optimizer state")
+            page.locator('[data-lifecycle-mode="prefill"]').click()
+            expect(page.locator("[data-lifecycle-persist-label]")).to_have_text("交给同一请求的 Decode")
+            expect(page.locator("[data-lifecycle-persist]")).to_contain_text("当前请求 KV cache")
+            page.locator('[data-lifecycle-mode="decode"]').click()
+            expect(page.locator("[data-lifecycle-persist-label]")).to_have_text("跨生成步保留")
+            expect(page.locator("[data-lifecycle-absent]")).to_contain_text("gradient")
+
+            page.locator('[data-norm-input="shift"]').evaluate(
+                """element => {
+                  element.value = "0";
+                  element.dispatchEvent(new Event("input", {bubbles: true}));
+                }"""
+            )
+            expect(page.locator('[data-norm-delta="rms"]')).to_have_text("0.000")
+            page.locator('[data-swiglu-input="gate"]').evaluate(
+                """element => {
+                  element.value = "-2";
+                  element.dispatchEvent(new Event("input", {bubbles: true}));
+                }"""
+            )
+            expect(page.locator('[data-swiglu-number="silu"]')).to_have_text("-0.238")
+
+            rope_dot = page.locator("[data-rope-dot]").inner_text()
+            page.locator('[data-rope-input="shift"]').evaluate(
+                """element => {
+                  element.value = "9";
+                  element.dispatchEvent(new Event("input", {bubbles: true}));
+                }"""
+            )
+            expect(page.locator("[data-rope-dot]")).to_have_text(rope_dot)
+            page.locator('[data-swa-input="window"]').evaluate(
+                """element => {
+                  element.value = "6";
+                  element.dispatchEvent(new Event("input", {bubbles: true}));
+                }"""
+            )
+            expect(page.locator("[data-swa-summary]")).to_contain_text("直接 6")
+            page.locator('[data-intervention-title^="Soft-cap"]').click()
+            expect(page.locator("[data-intervention-readout-title]")).to_contain_text("Soft-cap")
+            expect(page.locator('[data-intervention-title^="Soft-cap"]')).to_have_attribute("aria-pressed", "true")
+            expect(page.locator(".paper-figure-evidence img")).to_have_count(3)
+            expect(page.locator(".paper-figure-evidence figure > a")).to_have_count(3)
+
+            page.locator('[data-attention-control="kv-heads"] [data-value="4"]').click()
+            expect(page.locator('[data-attention-control="kv-heads"] [data-value="4"]')).to_be_focused()
+            expect(page.locator('[data-attention-input="context-index"]')).to_have_attribute(
+                "aria-valuetext", "8,192 tokens"
+            )
+            page.locator('[data-attention-control="query-heads"] [data-value="64"]').click()
+            page.locator('[data-attention-preset="mha"]').click()
+            page.locator('[data-attention-q-strip] [data-head="8"]').click()
+            expect(page.locator('[data-attention-q-strip] .is-group-peer')).to_have_count(1)
+            expect(page.locator('[data-attention-q-strip] [data-head="0"]')).not_to_have_class(
+                re.compile(r"is-group-peer")
+            )
+
+            visual_state = page.evaluate(
+                """() => ({
+                  enhanced: [...document.querySelectorAll('[data-reader-widget]')]
+                    .every(element => element.dataset.enhanced === 'true'),
+                  canvases: [...document.querySelectorAll('[data-rope-canvas], [data-swa-canvas]')]
+                    .map(canvas => {
+                    const pixels = canvas.getContext('2d')
+                      .getImageData(0, 0, canvas.width, canvas.height).data;
+                    let visible = 0;
+                    for (let index = 3; index < pixels.length; index += 4) {
+                      if (pixels[index]) visible += 1;
+                    }
+                    return {width: canvas.width, height: canvas.height, visible};
+                  })
+                })"""
+            )
+            assert visual_state["enhanced"], visual_state
+            assert len(visual_state["canvases"]) == 2, visual_state
+            assert all(canvas["visible"] > 100 for canvas in visual_state["canvases"]), visual_state
+            concept_layout = page.evaluate(
+                """() => ({
+                  overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+                  labOverflow: document.querySelector('.attention-head-lab').scrollWidth
+                    - document.querySelector('.attention-head-lab').clientWidth
+                })"""
+            )
+            assert concept_layout["overflow"] <= 1, concept_layout
+            assert concept_layout["labOverflow"] <= 1, concept_layout
+            page.set_viewport_size({"width": 1600, "height": 1000})
+
+            page.goto(
+                f"{base_url}/papers/reward-verifier-policy-learning/",
+                wait_until="networkidle",
+            )
+            reward_lab = page.locator('[data-reader-widget="reward-policy-clock"]')
+            expect(reward_lab).to_be_visible()
+            expect(reward_lab).to_have_attribute("data-enhanced", "true")
+            expect(page.locator("[data-reward-badge]")).to_have_text("不更新 generator")
+            expect(page.locator("[data-reward-verdict]")).to_contain_text("推理时选择")
+            expect(page.locator("[data-reward-update-node]")).not_to_have_class(
+                re.compile(r"is-updating")
+            )
+
+            reward_expectations = {
+                "rs-sft": ("CE 更新 generator", "外层 online data refresh"),
+                "policy-gradient": ("reward 更新 policy", "近 on-policy"),
+                "dpo": ("pair loss 更新 policy", "offline preference optimization"),
+                "mcts-dpo": ("内层固定，外层刷新", "outer online/on-policy refresh"),
+                "ilql": ("固定日志上的 offline RL", "value-based offline RL"),
+            }
+            for mode, (badge, verdict) in reward_expectations.items():
+                button = page.locator(f'[data-reward-mode="{mode}"]')
+                button.click()
+                expect(button).to_have_attribute("aria-pressed", "true")
+                expect(page.locator("[data-reward-badge]")).to_have_text(badge)
+                expect(page.locator("[data-reward-verdict]")).to_contain_text(verdict)
+                expect(page.locator("[data-reward-update-node]")).to_have_class(
+                    re.compile(r"is-updating")
+                )
+
+            expect(page.locator(".paper-figure-evidence img")).to_have_count(2)
+            expect(page.locator(".paper-figure-evidence figure > a")).to_have_count(2)
+            reward_layout = reward_lab.evaluate(
+                """root => ({
+                  pageOverflow: document.documentElement.scrollWidth
+                    - document.documentElement.clientWidth,
+                  labOverflow: root.scrollWidth - root.clientWidth,
+                  clippedButtons: [...root.querySelectorAll('[data-reward-mode]')]
+                    .filter(button => button.scrollWidth > button.clientWidth + 1).length
+                })"""
+            )
+            assert reward_layout["pageOverflow"] <= 1, reward_layout
+            assert reward_layout["labOverflow"] <= 1, reward_layout
+            assert reward_layout["clippedButtons"] == 0, reward_layout
+
+            page.set_viewport_size({"width": 390, "height": 844})
+            mobile_reward_layout = reward_lab.evaluate(
+                """root => ({
+                  pageOverflow: document.documentElement.scrollWidth
+                    - document.documentElement.clientWidth,
+                  labOverflow: root.scrollWidth - root.clientWidth,
+                  pipelineColumns: getComputedStyle(root.querySelector('.reward-clock-lab__pipeline'))
+                    .gridTemplateColumns.split(' ').length,
+                  readoutColumns: getComputedStyle(root.querySelector('.reward-clock-lab__readout'))
+                    .gridTemplateColumns.split(' ').length
+                })"""
+            )
+            assert mobile_reward_layout["pageOverflow"] <= 1, mobile_reward_layout
+            assert mobile_reward_layout["labOverflow"] <= 1, mobile_reward_layout
+            assert mobile_reward_layout["pipelineColumns"] == 1, mobile_reward_layout
+            assert mobile_reward_layout["readoutColumns"] == 1, mobile_reward_layout
             page.set_viewport_size({"width": 1600, "height": 1000})
 
             page.goto(f"{base_url}/papers/arxiv-1706.03762/", wait_until="networkidle")
@@ -347,16 +630,21 @@ def run() -> None:
             expect(page.locator(".reader-section-tools__current small")).to_have_text(re.compile(r"1 / \d+"))
             expect(page.locator(".paper-reading-card__details")).to_be_visible()
             expect(page.locator(".paper-reading-card__route")).to_contain_text("本阶段 5/7")
-            expect(page.locator(".paper-reading-card__route")).to_contain_text("全路线 5/56")
+            expect(page.locator(".paper-reading-card__route")).to_contain_text("全路线 5/64")
             expect(page.locator(".paper-reading-card__route")).to_contain_text("从上一篇到本篇")
             expect(page.locator(".paper-reading-card__route nav a")).to_have_count(2)
             expect(page.locator(".reading-route-footer")).to_be_visible()
             expect(page.locator(".reading-route-footer__next")).to_contain_text("现代 Transformer Block")
             expect(page.locator(".md-sidebar--primary")).to_be_visible()
+            expect(page.locator(".md-sidebar--secondary")).to_be_visible()
             page.locator(".evidence-panel-toggle").click()
             expect(panel).to_be_visible()
+            panel_box = panel.bounding_box()
+            assert panel_box["y"] == 0, panel_box
+            expect(page.locator(".md-header")).not_to_be_visible()
             expect(page.locator(".paper-reading-card__details")).not_to_be_visible()
             expect(page.locator(".md-sidebar--primary")).not_to_be_visible()
+            expect(page.locator(".md-sidebar--secondary")).not_to_be_visible()
             body_block = page.locator(
                 "p[data-reader-block]",
                 has_text="Transformer 的关键不只是“使用了注意力”",
@@ -375,6 +663,8 @@ def run() -> None:
             expect(page.locator('[data-action="select-thread"]')).to_contain_text("历史问题")
             expect(page.locator('[data-action="archive-thread"]')).to_be_enabled()
             expect(page.locator('[data-action="new-thread"]')).to_be_enabled()
+            expect(page.locator('[data-setting="knowledge-model"]')).to_have_value("gpt-5.6-terra")
+            expect(page.locator('[data-setting="knowledge-effort"]')).to_have_value("medium")
             expect(page.locator('.knowledge-message[data-message-id="history-user"] .knowledge-message__pdf')).to_be_visible()
             expect(page.locator('.knowledge-message[data-message-id="history-user"] canvas[data-rendered="true"]')).to_be_visible(timeout=15_000)
             layout = page.locator(".knowledge-assistant").evaluate(
@@ -403,7 +693,13 @@ def run() -> None:
             expect(viewer.locator('.pdf-page[data-page="2"] canvas')).to_be_visible(timeout=15_000)
             expect(viewer.locator("#page-number")).to_have_value("2")
             expect(viewer.locator("#page-count")).to_have_text("15")
-            expect(viewer.locator("#translate-page")).to_have_text("翻译当前页")
+            expect(viewer.locator("#translation-toggle")).to_have_text("译文")
+            expect(viewer.locator("#translation-toggle")).to_have_attribute("aria-pressed", "false")
+            viewer.locator("#translation-toggle").click()
+            expect(viewer.locator("#translation-toggle")).to_have_attribute("aria-pressed", "true")
+            page.wait_for_timeout(250)
+            expect(viewer.locator("#page-number")).to_have_value("2")
+            expect(viewer.locator("#translate-page")).to_have_text("翻译本页")
             expect(viewer.locator("#translate-all")).to_have_text("翻译全文")
             viewer.locator("#translate-page").click()
             expect(viewer.locator("#translation-panel")).to_be_visible()
@@ -411,41 +707,145 @@ def run() -> None:
             translation_box = viewer.locator("#translation-panel").bounding_box()
             assert translation_box["x"] >= viewport_box["x"] + viewport_box["width"]
             assert abs(translation_box["y"] - viewport_box["y"]) < 2
+            translation_content_box = viewer.locator("#translation-content").bounding_box()
+            assert translation_content_box["y"] < 300, translation_content_box
+            assert translation_content_box["height"] > 600, translation_content_box
             expect(viewer.locator("#translation-resizer")).to_have_attribute("aria-orientation", "vertical")
-            expect(viewer.locator("#translation-state")).to_contain_text("Codex 正在")
+            expect(viewer.locator("#translation-state")).to_contain_text(
+                re.compile(r"Codex 正在|已缓存")
+            )
             expect(viewer.locator("#zoom-out")).to_be_visible()
             expect(viewer.locator("#zoom-in")).to_be_visible()
             initial_page_width = viewer.locator('.pdf-page[data-page="2"]').bounding_box()["width"]
             viewer.locator("#zoom-in").click()
             page.wait_for_timeout(250)
             assert viewer.locator('.pdf-page[data-page="2"]').bounding_box()["width"] > initial_page_width
+            horizontal_range = viewer.locator("#viewport").evaluate(
+                """viewport => {
+                  const pdfPage = document.querySelector('.pdf-page[data-page="2"]');
+                  const style = getComputedStyle(viewport);
+                  const leftInset = Number.parseFloat(style.paddingLeft);
+                  viewport.scrollLeft = 0;
+                  const viewportRect = viewport.getBoundingClientRect();
+                  const startRect = pdfPage.getBoundingClientRect();
+                  const startGap = startRect.left - viewportRect.left;
+                  viewport.scrollLeft = viewport.scrollWidth - viewport.clientWidth;
+                  const endRect = pdfPage.getBoundingClientRect();
+                  return {
+                    overflow: viewport.scrollWidth - viewport.clientWidth,
+                    reachedStart: Math.abs(startGap - leftInset) < 2,
+                    reachedEnd: Math.abs(viewportRect.right - endRect.right) < 2
+                  };
+                }"""
+            )
+            assert horizontal_range["overflow"] > 0, horizontal_range
+            assert horizontal_range["reachedStart"], horizontal_range
+            assert horizontal_range["reachedEnd"], horizontal_range
             viewer.locator("#fit-width").click()
             expect(viewer.locator(".translation-target")).to_contain_text("第 2 页模拟中文译文", timeout=3_000)
-            expect(viewer.locator(".translation-target .translation-block[data-block-id='p0002-b001'] .translation-block__label")).to_contain_text("p0002-b001")
-            expect(viewer.locator(".translation-target .translation-block[data-block-id='p0002-b001'] .translation-block__natural")).to_have_text("正文第 1 段")
-            expect(viewer.locator(".translation-target .translation-block[data-block-id='p0002-b001'] .translation-block__confidence")).to_contain_text("高置信度")
+            viewer.locator("body").evaluate(
+                """() => {
+                  window.__translationFullMetrics.count = 0;
+                  window.__translationFullMetrics.active = 0;
+                  window.__translationFullMetrics.maxActive = 0;
+                  window.__translationFullMetrics.delay = 2300;
+                }"""
+            )
+            page.wait_for_timeout(3100)
+            full_poll_metrics = viewer.locator("body").evaluate("() => ({...window.__translationFullMetrics})")
+            assert full_poll_metrics["count"] >= 1, full_poll_metrics
+            assert full_poll_metrics["maxActive"] == 1, full_poll_metrics
+            viewer.locator("body").evaluate("() => { window.__translationFullMetrics.delay = 0; }")
+            translation_block = viewer.locator(".translation-target .translation-block[data-block-id='p0002-b001']")
+            expect(translation_block.locator(".translation-block__label")).to_contain_text("p0002-b001")
+            expect(translation_block.locator(".translation-block__natural")).to_have_text("正文第 1 段")
+            expect(translation_block.locator(".translation-block__confidence")).to_contain_text("高置信度")
             expect(viewer.locator(".translation-table-data th")).to_have_text(["模型", "质量"])
             expect(viewer.locator(".translation-table-data tbody tr")).to_have_count(2)
             expect(viewer.locator(".translation-figure-data")).to_contain_text("输入经过编码器与解码器后生成输出")
             expect(viewer.locator(".translation-figure-flow li")).to_have_count(2)
             expect(viewer.locator(".translation-figure-labels")).to_contain_text("Inputs")
-            viewer.locator(".translation-target .translation-block[data-block-id='p0002-b001']").click()
-            expect(viewer.locator("#status")).to_contain_text("已定位到第 2 页")
-            viewer.locator("#show-source").check()
-            expect(viewer.locator(".translation-source")).to_be_visible()
-            expect(viewer.locator(".translation-source")).to_contain_text("Source text for page 2")
+            expect(viewer.locator("#retranslation-controls")).to_be_visible()
+            expect(viewer.locator("#retranslation-model")).to_have_value("gpt-5.6-terra")
+            expect(viewer.locator("#retranslation-effort")).to_have_value("medium")
+            viewer.locator("#retranslation-model").select_option("gpt-5.6-sol")
+            viewer.locator("#retranslation-effort").select_option("xhigh")
+            viewer.locator("#retranslate-page").click()
+            expect(viewer.locator("#retranslate-page")).to_have_text("正在重译…")
+            expect(viewer.locator("#translation-state")).to_contain_text("gpt-5.6-sol / xhigh", timeout=3_000)
+            expect(viewer.locator("#retranslate-page")).to_have_text("重新翻译")
+            retranslation_request = viewer.locator("body").evaluate("() => window.__translationPostCalls.at(-1)")
+            assert retranslation_request["force"] is True
+            assert retranslation_request["model"] == "gpt-5.6-sol"
+            assert retranslation_request["reasoning_effort"] == "xhigh"
+            expect(viewer.locator("#show-source")).to_have_count(0)
+            expect(viewer.locator(".translation-source")).to_have_count(0)
+
+            # A translated block centers its matched PDF region in both axes,
+            # including when the page is wider than the PDF viewport.
+            viewer.locator("#zoom-in").click()
+            viewer.locator("#zoom-in").click()
+            page.wait_for_timeout(300)
+            translation_block.click()
+            expect(viewer.locator("#status")).to_contain_text("已通过原文匹配定位")
+            page.wait_for_timeout(650)
+            centered = viewer.locator("#viewport").evaluate(
+                """viewport => {
+                  const target = document.querySelector('.pdf-block-highlight.is-selected');
+                  const viewportRect = viewport.getBoundingClientRect();
+                  const targetRect = target.getBoundingClientRect();
+                  return {
+                    x: targetRect.left + targetRect.width / 2 - (viewportRect.left + viewport.clientWidth / 2),
+                    y: targetRect.top + targetRect.height / 2 - (viewportRect.top + viewport.clientHeight / 2)
+                  };
+                }"""
+            )
+            assert abs(centered["x"]) < 6, centered
+            assert abs(centered["y"]) < 6, centered
+
+            # Dragging the enlarged PDF pans the native scroll viewport.
+            pdf_viewport = viewer.locator("#viewport")
+            expect(pdf_viewport).to_have_css("cursor", "grab")
+            drag_box = pdf_viewport.bounding_box()
+            before_drag = pdf_viewport.evaluate("viewport => ({left: viewport.scrollLeft, top: viewport.scrollTop})")
+            drag_x = drag_box["x"] + drag_box["width"] * 0.35
+            drag_y = drag_box["y"] + drag_box["height"] * 0.45
+            page.mouse.move(drag_x, drag_y)
+            page.mouse.down()
+            page.mouse.move(drag_x - 80, drag_y - 60, steps=8)
+            page.mouse.up()
+            after_drag = pdf_viewport.evaluate("viewport => ({left: viewport.scrollLeft, top: viewport.scrollTop})")
+            assert after_drag["left"] > before_drag["left"] + 60, (before_drag, after_drag)
+            assert after_drag["top"] > before_drag["top"] + 40, (before_drag, after_drag)
 
             # Full translation is sequential, stoppable and resumes by
             # skipping pages already present in the local cache.
             viewer.locator("#translate-all").click()
+            full_start_request = viewer.locator("body").evaluate("() => window.__translationFullStartCalls.at(-1)")
+            assert full_start_request["model"] == "gpt-5.6-sol"
+            assert full_start_request["reasoning_effort"] == "xhigh"
             expect(viewer.locator("#translate-all")).to_have_text("停止全文")
             expect(viewer.locator("#translate-all")).to_have_attribute("aria-busy", "true")
             expect(viewer.locator("#full-translation-progress")).to_contain_text("/15")
             expect(viewer.locator("#full-translation-status")).to_be_visible()
             expect(viewer.locator("#full-translation-status-title")).to_contain_text("全文翻译")
             viewer.locator("#translate-all").click()
-            expect(viewer.locator("#translate-all")).to_have_text("继续全文", timeout=3_000)
+            expect(viewer.locator("#translate-all")).to_have_text("补齐全文", timeout=3_000)
             expect(viewer.locator("#full-translation-status-title")).to_contain_text("已停止")
+            viewer.locator("body").evaluate("""() => {
+              window.__translationFullState = {
+                status: "partial",
+                completed: 10,
+                total: 15,
+                current_pages: [],
+                current_started_at: "2026-01-01T00:00:00Z",
+                concurrency: 8,
+                failures: 2,
+                last_error: "第 8 页：模型服务调用失败（HTTP 502）"
+              };
+            }""")
+            expect(viewer.locator("#full-translation-status-title")).to_contain_text("暂未全部完成", timeout=3_000)
+            expect(viewer.locator("#full-translation-elapsed")).to_have_text("00:00")
             viewer.locator("body").evaluate("""() => {
               for (let page = 1; page <= 15; page += 1) {
                 window.__translationTestState[page] ||= {
@@ -461,7 +861,9 @@ def run() -> None:
             post_calls_before_resume = viewer.locator("body").evaluate("() => window.__translationPostCalls.length")
             viewer.locator("#translate-all").click()
             expect(viewer.locator("#full-translation-progress")).to_have_text("已完成 15/15", timeout=3_000)
-            expect(viewer.locator("#full-translation-status-title")).to_have_text("全文翻译完成")
+            expect(viewer.locator("#translate-all")).to_have_text("全文已缓存")
+            expect(viewer.locator("#translate-all")).to_be_disabled()
+            expect(viewer.locator("#full-translation-status")).to_be_hidden()
             post_calls_after_resume = viewer.locator("body").evaluate("() => window.__translationPostCalls.length")
             assert post_calls_after_resume == post_calls_before_resume
 
@@ -474,16 +876,30 @@ def run() -> None:
             viewer.locator('.pdf-page[data-page="7"]').evaluate(
                 "element => element.scrollIntoView({block: 'center'})"
             )
-            expect(viewer.locator("#page-number")).to_have_value("7", timeout=5_000)
             expect(viewer.locator('.pdf-page[data-page="7"] canvas')).to_be_visible(timeout=15_000)
+            expect(viewer.locator("#page-number")).to_have_value("7", timeout=15_000)
             expect(viewer.locator('.pdf-page[data-page="2"] canvas')).not_to_be_visible(timeout=5_000)
             page.locator('[data-reader-tab="assistant"]').click()
+            page.wait_for_timeout(100)
+            hidden_poll_count = viewer.locator("body").evaluate("() => window.__translationFullMetrics.count")
+            page.wait_for_timeout(2200)
+            assert viewer.locator("body").evaluate(
+                "() => window.__translationFullMetrics.count"
+            ) == hidden_poll_count
             page.locator('[data-action="add-pdf"]').click()
             expect(page.locator(".knowledge-context")).to_contain_text("PDF 整页图像")
             expect(page.locator(".knowledge-context")).to_contain_text("物理页 7")
+            page.locator('[data-setting="knowledge-model"]').select_option("gpt-5.6-sol")
+            page.locator('[data-setting="knowledge-effort"]').select_option("xhigh")
+            page.wait_for_function("() => window.__knowledgeSettingsRequests.length === 2")
             page.locator(".knowledge-composer textarea").fill("解释第七页图表")
             page.locator('[data-action="send"]').click()
             expect(page.locator(".knowledge-context")).to_have_count(0)
+            page.wait_for_function("() => window.__knowledgeAskRequests.length === 1")
+            ask_settings = page.evaluate(
+                "() => { const call = window.__knowledgeAskRequests.at(-1); return {model: call.model, effort: call.effort}; }"
+            )
+            assert ask_settings == {"model": "gpt-5.6-sol", "effort": "xhigh"}
             pending_message = page.locator(".knowledge-message.is-pending")
             expect(pending_message).to_contain_text("解释第七页图表")
             expect(pending_message.locator(".knowledge-message__pdf")).to_contain_text("物理页 7")
@@ -524,10 +940,14 @@ def run() -> None:
             expect(page.locator(".knowledge-session")).to_have_text("只读")
             expect(page.locator(".knowledge-composer textarea")).to_be_disabled()
             expect(page.locator('[data-action="send"]')).to_be_disabled()
+            expect(page.locator('[data-setting="knowledge-model"]')).to_be_disabled()
+            expect(page.locator('[data-setting="knowledge-effort"]')).to_be_disabled()
             page.once("dialog", lambda dialog: dialog.accept())
             page.locator('[data-action="new-thread"]').click()
             expect(page.locator('[data-action="select-thread"]')).to_contain_text("对话 2")
             expect(page.locator(".knowledge-composer textarea")).to_be_enabled()
+            expect(page.locator('[data-setting="knowledge-model"]')).to_be_enabled()
+            expect(page.locator('[data-setting="knowledge-effort"]')).to_be_enabled()
             expect(page.locator(".knowledge-messages .knowledge-empty")).to_be_visible()
 
             body_block_id = body_block.get_attribute("data-reader-block")
@@ -581,6 +1001,7 @@ def run() -> None:
             assert saved_width is not None
             page.reload(wait_until="networkidle")
             expect(page.locator(".evidence-panel")).not_to_be_visible()
+            expect(page.locator(".md-sidebar--secondary")).to_be_visible()
             page.locator(".evidence-panel-toggle").click()
             restored_width = page.locator(".evidence-panel").bounding_box()["width"]
             assert abs(restored_width - resized_width) < 3, (resized_width, restored_width)
@@ -613,7 +1034,9 @@ def run() -> None:
             expect(page.locator(".evidence-panel")).not_to_be_visible()
             page.locator(".evidence-panel-toggle").click()
             bert_viewer = page.frame_locator(".evidence-panel__frame")
-            bert_page = bert_viewer.locator("#page-number").input_value(timeout=15_000)
+            bert_src = page.locator(".evidence-panel__frame").get_attribute("src")
+            bert_page = urllib.parse.parse_qs(urllib.parse.urlparse(bert_src).query)["page"][0]
+            expect(bert_viewer.locator("#page-number")).to_have_value(bert_page, timeout=15_000)
             expect(bert_viewer.locator(f'.pdf-page[data-page="{bert_page}"] canvas')).to_be_visible(timeout=15_000)
             assert not remote_requests, remote_requests
 

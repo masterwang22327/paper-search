@@ -209,6 +209,30 @@ class ScaffoldTests(unittest.TestCase):
             self.assertFalse(result["valid"])
             self.assertIn("TASK.md has not been materialized from the launch prompt", result["errors"])
 
+    def test_completed_run_can_close_before_its_resource_limits(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            current = datetime(2026, 7, 17, 12, 0, tzinfo=runtime.TZ)
+            init_args = Namespace(
+                task_id="topic",
+                deadline="2026-07-20T23:00:00+08:00",
+                duration_days=3,
+                goal_token_budget=50_000,
+                quota_stop_usd=1.0,
+                quota_check_minutes=20,
+                work_unit_minutes=10,
+            )
+            with patch.object(runtime, "TASKS_ROOT", root / "tasks"), patch.object(
+                runtime, "now_bjt", return_value=current
+            ):
+                runtime.initialize(init_args)
+                result = runtime.close_run(Namespace(task_id="topic", reason="STOP_COMPLETE"))
+                saved = runtime.load_current_run(root / "tasks" / "topic")
+
+            self.assertEqual(result["status"], "closed")
+            self.assertEqual(saved["status"], "stopped")
+            self.assertEqual(saved["terminal_reason"], "STOP_COMPLETE")
+
     def test_legacy_runtime_is_migrated_without_touching_canonical_report(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)

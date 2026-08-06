@@ -121,19 +121,21 @@ into shared library knowledge is a separate human-approved operation.
 
 ## Failure And Stop Semantics
 
-A failed search, inaccessible paper, parser error, quota-monitor failure,
-subagent failure, or early completion of the initial deliverables is not a stop
-condition. Save the error boundary and continue with another safe, useful
-increment inside the task scope. Quota-monitor failure proves neither remaining
-nor exhausted quota.
+A failed search, inaccessible paper, parser error, quota-monitor failure, or
+subagent failure does not by itself prove the run complete. Likewise, producing
+an initial draft is not enough. Save the error boundary and continue with a
+safe, useful in-scope increment when one remains. Quota-monitor failure proves
+neither remaining nor exhausted quota.
 
-The launch prompt defines the only terminal conditions. Before any terminal
-return, make `STATUS.md`, `REPORT.md`, and `SOURCES.md` safe to resume and record
-the precise reason. Never call work reproduced or verified without saved
-evidence supporting that label.
+The launch prompt defines the completion evidence and resource limits. A run may
+close with `STOP_COMPLETE` once that evidence is saved and no remaining in-scope
+gap is expected to change the current answer. Before any terminal return, make
+`STATUS.md`, `REPORT.md`, and `SOURCES.md` safe to resume and record the precise
+reason. Never call work reproduced, verified, or complete without saved evidence
+supporting that label.
 
-The only automatic terminal thresholds for one run are its declared deadline and its product Goal
-token budget. Fresh external daily-quota exhaustion pauses the same run; it does not terminate it.
-Early deliverable completion, topic/profile updates, ordinary blockers, and temporary lack of useful
-new papers are not terminal thresholds. An explicit user cancellation remains an immediate control
-instruction rather than an automatic threshold.
+The declared deadline and product Goal token budget are ceilings, not consumption targets. Fresh
+external daily-quota exhaustion pauses the same run; it does not terminate it. Meeting the configured
+completion evidence is a deliberate terminal decision, while topic/profile updates, ordinary blockers,
+and temporary lack of useful new papers are not proof of completion. An explicit user cancellation
+remains an immediate control instruction.

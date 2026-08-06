@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 
@@ -13,6 +14,12 @@ SESSION_ID = "11111111-2222-4333-8444-555555555555"
 TRANSLATION_SESSION_ID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
 args = sys.argv[1:]
 prompt = sys.stdin.read()
+delay_question = os.environ.get("FAKE_CODEX_DELAY_QUESTION", "")
+if delay_question and delay_question in prompt:
+    ready_file = os.environ.get("FAKE_CODEX_READY_FILE")
+    if ready_file:
+        Path(ready_file).touch()
+    time.sleep(float(os.environ.get("FAKE_CODEX_DELAY_SECONDS", "1")))
 log_path = os.environ.get("FAKE_CODEX_LOG")
 if log_path:
     images = []
