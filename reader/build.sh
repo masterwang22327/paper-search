@@ -14,7 +14,8 @@ if [ ! -x "$READER_DIR/.venv/bin/mkdocs" ]; then
     "$READER_DIR/.venv/bin/python" -m pip install -r "$READER_DIR/requirements.txt"
 fi
 
-"$READER_DIR/.venv/bin/python" "$READER_DIR/scripts/prepare_docs.py" --task-id "$TASK_ID"
-cd "$READER_DIR"
-"$READER_DIR/.venv/bin/mkdocs" build --clean --strict
-printf 'Built static site at %s/site/index.html\n' "$READER_DIR"
+SITE_DATABASE="$READER_DIR/user-data/$TASK_ID/site.sqlite3"
+"$READER_DIR/.venv/bin/python" "$READER_DIR/build_site.py" \
+  --task-id "$TASK_ID" \
+  --database "$SITE_DATABASE"
+printf 'Built SQLite Reader site at %s\n' "$SITE_DATABASE"

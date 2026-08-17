@@ -22,12 +22,17 @@ import tomllib
 import uuid
 from datetime import datetime
 from http import HTTPStatus
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path, PurePosixPath
 from urllib.parse import parse_qs, urlparse
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from xml.etree import ElementTree
+
+from translation_store import TranslationStore
+from runtime_store import RuntimeStore
+from site_store import SiteStore, send_site_entry
+from task_store import TaskArtifactStore
 
 
 READER_DIR = Path(__file__).resolve().parent
@@ -50,7 +55,7 @@ MAX_TABLE_COLUMNS = 30
 MAX_TABLE_ROWS = 200
 MAX_FIGURE_LABELS = 80
 MAX_FLOW_STEPS = 40
-DEFAULT_TRANSLATION_API_URL = "https://www.sevnx.lol/v1/responses"
+DEFAULT_TRANSLATION_API_URL = "https://www.sevnx.one/v1/responses"
 DEFAULT_TRANSLATION_MODEL = "gpt-5.6-terra"
 DEFAULT_TRANSLATION_REASONING_EFFORT = "medium"
 DEFAULT_RETRANSLATION_MODEL = "gpt-5.6-sol"
@@ -112,13 +117,20 @@ class ReaderState:
     def __init__(self, task_id: str, port: int) -> None:
         self.task_id = task_id
         self.task_dir = (REPO_DIR / "tasks" / task_id).resolve()
-        self.site_dir = (READER_DIR / "site").resolve()
         user_root = Path(os.environ.get("READER_USER_DATA_DIR", READER_DIR / "user-data"))
         self.user_dir = (user_root / task_id).resolve()
         self.user_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.runtime_store = RuntimeStore(self.user_dir / "state.sqlite3")
+        self.runtime_store.compact_legacy(self.user_dir)
+        self.translation_store = TranslationStore(self.user_dir / "translations.sqlite3")
+        self.task_artifact_store = TaskArtifactStore.open_existing(self.task_dir)
+        site_database = Path(
+            os.environ.get("READER_SITE_DATABASE", self.user_dir / "site.sqlite3")
+        )
+        self.site_store = SiteStore(site_database, REPO_DIR)
+        self.site_manifest = self.site_store.load_json("context-manifest.json", {})
         self.sessions_path = self.user_dir / "sessions.json"
         self.revision_settings_path = self.user_dir / "revision-settings.json"
-        self.manifest_path = self.site_dir / "context-manifest.json"
         self.origin = f"http://127.0.0.1:{port}"
         self.csrf_token = secrets.token_urlsafe(32)
         self.codex_bin = os.environ.get("CODEX_BIN") or shutil.which("codex")
@@ -140,7 +152,7 @@ class ReaderState:
         self.translation_job_responses: dict[str, set[object]] = {}
         self.chat_request_locks: dict[tuple[str, str], threading.Lock] = {}
         self.lock = threading.RLock()
-        if not self.task_dir.is_dir() or not self.site_dir.is_dir() or not self.manifest_path.is_file():
+        if not self.task_dir.is_dir() or not self.site_manifest.get("documents"):
             raise RuntimeError("Reader build or task directory is missing")
         if not self.codex_bin:
             raise RuntimeError("codex CLI was not found")
@@ -264,6 +276,15 @@ class ReaderState:
             raise ApiError(HTTPStatus.BAD_GATEWAY, "无法读取固定 PDF 的页数")
         return int(match.group(1))
 
+    def task_artifact_text(self, path: Path, limit: int) -> str | None:
+        if path.is_file():
+            return path.read_text(encoding="utf-8", errors="replace")[:limit]
+        store = getattr(self, "task_artifact_store", None)
+        if store is None:
+            return None
+        value = store.read_path_text(path, errors="replace")
+        return value[:limit] if value is not None else None
+
     def source_metadata(self, source_id: str) -> dict:
         cached = self.source_metadata_cache.get(source_id)
         if cached:
@@ -283,8 +304,8 @@ class ReaderState:
         }
 
         pdfinfo_path = source_dir / "pdfinfo.txt"
-        if pdfinfo_path.is_file():
-            pdfinfo = pdfinfo_path.read_text(encoding="utf-8", errors="replace")[:20_000]
+        pdfinfo = self.task_artifact_text(pdfinfo_path, 20_000)
+        if pdfinfo is not None:
             fields = dict(
                 match.groups()
                 for match in re.finditer(r"^([A-Za-z][A-Za-z ]+):\s*(.*?)\s*$", pdfinfo, re.MULTILINE)
@@ -299,9 +320,10 @@ class ReaderState:
                 ][:30]
 
         arxiv_path = source_dir / "arxiv-api.xml"
-        if arxiv_path.is_file():
+        arxiv_xml = self.task_artifact_text(arxiv_path, 2_000_000)
+        if arxiv_xml is not None:
             try:
-                root = ElementTree.parse(arxiv_path).getroot()
+                root = ElementTree.fromstring(arxiv_xml)
                 namespace = {"atom": "http://www.w3.org/2005/Atom"}
                 entry = root.find("atom:entry", namespace)
                 if entry is not None:
@@ -325,12 +347,12 @@ class ReaderState:
                     record_id = entry.findtext("atom:id", default="", namespaces=namespace)
                     if record_id.startswith(("https://", "http://")):
                         metadata["official_records"].insert(0, record_id[:1000])
-            except (ElementTree.ParseError, OSError):
+            except ElementTree.ParseError:
                 pass
 
         evidence_path = source_dir / "evidence.md"
-        if evidence_path.is_file():
-            evidence = evidence_path.read_text(encoding="utf-8", errors="replace")[:40_000]
+        evidence = self.task_artifact_text(evidence_path, 40_000)
+        if evidence is not None:
             if not metadata["title"]:
                 match = re.search(r"^#\s+(.+?)(?:\s+[—-]\s+Evidence.*)?$", evidence, re.MULTILINE)
                 if match:
@@ -366,8 +388,7 @@ class ReaderState:
         return path
 
     def manifest_document(self, document_id: str, sha256: str) -> dict:
-        manifest = load_json(self.manifest_path, {})
-        document = manifest.get("documents", {}).get(document_id)
+        document = self.site_manifest.get("documents", {}).get(document_id)
         if not document or document.get("sha256") != sha256:
             raise ApiError(HTTPStatus.CONFLICT, "页面版本已经变化，请刷新后重试")
         return document
@@ -529,9 +550,146 @@ class ReaderState:
     def translation_job_path(self, source_id: str) -> Path:
         return self.translation_dir(source_id) / "full-translation.json"
 
+    def translation_key(self, path: Path) -> str:
+        return path.relative_to(self.user_dir / "translations").as_posix()
+
+    def load_translation_json(self, path: Path, default):
+        store = getattr(self, "translation_store", None)
+        if store is not None:
+            content = store.read_bytes(self.translation_key(path))
+            if content is not None:
+                return json.loads(content.decode("utf-8"))
+        return load_json(path, default)
+
+    def save_translation_json(self, path: Path, value: object) -> None:
+        store = getattr(self, "translation_store", None)
+        if store is not None:
+            store.write_json(self.translation_key(path), value)
+            return
+        atomic_json(path, value)
+
+    def append_translation_history(self, source_id: str, value: object) -> None:
+        path = self.translation_dir(source_id) / "history.jsonl"
+        store = getattr(self, "translation_store", None)
+        if store is not None:
+            key = self.translation_key(path)
+            # A server may be started directly against a pre-compaction tree.
+            # Import an existing history stream before the first SQLite append.
+            if not store.contains(key) and path.is_file():
+                stat = path.stat()
+                store.write_bytes(
+                    key,
+                    path.read_bytes(),
+                    mode=stat.st_mode,
+                    mtime_ns=stat.st_mtime_ns,
+                )
+            store.append_jsonl(key, value)
+            return
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(value, ensure_ascii=False) + "\n")
+        os.chmod(path, 0o600)
+
+    def runtime_key(self, path: Path) -> str:
+        return path.relative_to(self.user_dir).as_posix()
+
+    def load_runtime_json(self, path: Path, default):
+        store = getattr(self, "runtime_store", None)
+        if store is not None:
+            key = self.runtime_key(path)
+            content = store.read_bytes(key)
+            if content is not None:
+                return json.loads(content.decode("utf-8"))
+            if path.is_file():
+                stat = path.stat()
+                content = path.read_bytes()
+                store.write_bytes(key, content, mode=stat.st_mode, mtime_ns=stat.st_mtime_ns)
+                return json.loads(content.decode("utf-8"))
+        return load_json(path, default)
+
+    def save_runtime_json(self, path: Path, value: object) -> None:
+        store = getattr(self, "runtime_store", None)
+        if store is not None:
+            store.write_json(self.runtime_key(path), value)
+            return
+        atomic_json(path, value)
+
+    def read_runtime_text(self, path: Path, default: str = "") -> str:
+        store = getattr(self, "runtime_store", None)
+        if store is not None:
+            key = self.runtime_key(path)
+            content = store.read_bytes(key)
+            if content is not None:
+                return content.decode("utf-8")
+            if path.is_file():
+                stat = path.stat()
+                content = path.read_bytes()
+                store.write_bytes(key, content, mode=stat.st_mode, mtime_ns=stat.st_mtime_ns)
+                return content.decode("utf-8")
+        return path.read_text(encoding="utf-8") if path.is_file() else default
+
+    def write_runtime_text(self, path: Path, value: str) -> None:
+        store = getattr(self, "runtime_store", None)
+        if store is not None:
+            store.write_text(self.runtime_key(path), value)
+            return
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        path.write_text(value, encoding="utf-8")
+        os.chmod(path, 0o600)
+
+    def append_runtime_jsonl(self, path: Path, value: object) -> None:
+        store = getattr(self, "runtime_store", None)
+        if store is not None:
+            key = self.runtime_key(path)
+            if not store.contains(key) and path.is_file():
+                stat = path.stat()
+                store.write_bytes(
+                    key,
+                    path.read_bytes(),
+                    mode=stat.st_mode,
+                    mtime_ns=stat.st_mtime_ns,
+                )
+            store.append_jsonl(key, value)
+            return
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(value, ensure_ascii=False) + "\n")
+        os.chmod(path, 0o600)
+
+    def runtime_exists(self, path: Path) -> bool:
+        store = getattr(self, "runtime_store", None)
+        return bool(store and store.contains(self.runtime_key(path))) or path.is_file()
+
+    def delete_runtime(self, path: Path) -> bool:
+        store = getattr(self, "runtime_store", None)
+        deleted = store.delete(self.runtime_key(path)) if store is not None else False
+        if path.is_file():
+            path.unlink()
+            deleted = True
+        return deleted
+
+    def existing_translation_pages(self, source_id: str) -> set[int]:
+        pages: set[int] = set()
+        store = getattr(self, "translation_store", None)
+        if store is not None:
+            prefix = f"{source_id}/pages"
+            for key in store.list_keys(prefix):
+                name = PurePosixPath(key).name
+                if name.endswith(".json") and name[:-5].isdigit():
+                    pages.add(int(name[:-5]))
+        legacy_pages = self.translation_dir(source_id) / "pages"
+        if legacy_pages.is_dir():
+            pages.update(int(path.stem) for path in legacy_pages.glob("*.json") if path.stem.isdigit())
+        return pages
+
     def cached_translation_page_count(self, source_id: str) -> int:
         page_count = self.source_metadata(source_id)["page_count"]
-        return sum(self.translation_page_path(source_id, page).is_file() for page in range(1, page_count + 1))
+        if getattr(self, "translation_store", None) is None:
+            return sum(
+                self.translation_page_path(source_id, page).is_file()
+                for page in range(1, page_count + 1)
+            )
+        return len(self.existing_translation_pages(source_id).intersection(range(1, page_count + 1)))
 
     def translation_job_status(self, source_id: str) -> dict:
         metadata = self.source_metadata(source_id)
@@ -550,7 +708,7 @@ class ReaderState:
             "stop_requested": False,
         }
         with self.lock:
-            state = load_json(self.translation_job_path(source_id), default)
+            state = self.load_translation_json(self.translation_job_path(source_id), default)
             thread = self.translation_jobs.get(source_id)
             state_changed = False
             if state.get("status") in {"queued", "running", "stopping"} and not (thread and thread.is_alive()):
@@ -570,9 +728,12 @@ class ReaderState:
                 state["updated_at"] = now_iso()
                 state_changed = True
             if state_changed:
-                atomic_json(self.translation_job_path(source_id), state)
+                self.save_translation_json(self.translation_job_path(source_id), state)
             state["completed"] = self.cached_translation_page_count(source_id)
             state["total"] = metadata["page_count"]
+            state["missing_pages"] = sorted(
+                set(range(1, metadata["page_count"] + 1)) - self.existing_translation_pages(source_id)
+            )
             state["concurrency"] = max(
                 1, min(FULL_TRANSLATION_CONCURRENCY, int(state.get("concurrency", FULL_TRANSLATION_CONCURRENCY)))
             )
@@ -582,7 +743,28 @@ class ReaderState:
     def save_translation_job_state(self, source_id: str, state: dict) -> None:
         state["updated_at"] = now_iso()
         with self.lock:
-            atomic_json(self.translation_job_path(source_id), state)
+            self.save_translation_json(self.translation_job_path(source_id), state)
+
+    def mark_manual_translation_success(self, source_id: str) -> None:
+        with self.lock:
+            state = self.load_translation_json(self.translation_job_path(source_id), None)
+            if not isinstance(state, dict) or state.get("status") in {"queued", "running", "stopping"}:
+                return
+            completed = self.cached_translation_page_count(source_id)
+            total = self.source_metadata(source_id)["page_count"]
+            state.update({
+                "status": "completed" if completed >= total else "idle",
+                "completed": completed,
+                "total": total,
+                "current_page": None,
+                "current_pages": [],
+                "current_started_at": None,
+                "failures": 0,
+                "last_error": "",
+                "stop_requested": False,
+                "updated_at": now_iso(),
+            })
+            self.save_translation_json(self.translation_job_path(source_id), state)
 
     def register_translation_response(self, source_id: str, response: object) -> None:
         with self.lock:
@@ -617,7 +799,14 @@ class ReaderState:
             )
             page_order = [preferred_page, *range(1, total + 1)]
             page_order = list(dict.fromkeys(page for page in page_order if 1 <= page <= total))
-            missing = [page for page in page_order if not self.translation_page_path(source_id, page).is_file()]
+            if getattr(self, "translation_store", None) is None:
+                missing = [
+                    page for page in page_order
+                    if not self.translation_page_path(source_id, page).is_file()
+                ]
+            else:
+                existing_pages = self.existing_translation_pages(source_id)
+                missing = [page for page in page_order if page not in existing_pages]
             state_lock = threading.Lock()
             next_index = 0
             active_pages: set[int] = set()
@@ -788,7 +977,7 @@ class ReaderState:
             )
             self.translation_job_stops[source_id] = stop
             self.translation_jobs[source_id] = thread
-            atomic_json(self.translation_job_path(source_id), state)
+            self.save_translation_json(self.translation_job_path(source_id), state)
             thread.start()
             return state
 
@@ -797,11 +986,11 @@ class ReaderState:
         self.source_metadata(source_id)
         with self.lock:
             stop = self.translation_job_stops.get(source_id)
-            state = load_json(self.translation_job_path(source_id), {})
+            state = self.load_translation_json(self.translation_job_path(source_id), {})
             if stop and state.get("status") in {"queued", "running", "stopping"}:
                 stop.set()
                 state.update({"status": "stopping", "stop_requested": True, "updated_at": now_iso()})
-                atomic_json(self.translation_job_path(source_id), state)
+                self.save_translation_json(self.translation_job_path(source_id), state)
         if stop:
             self.cancel_translation_responses(source_id)
         return self.translation_job_status(source_id)
@@ -858,7 +1047,7 @@ class ReaderState:
         content = [{"type": "input_text", "text": prompt}]
         images = image_contexts if image_contexts is not None else ([image_context] if image_context else [])
         if images:
-            with tempfile.TemporaryDirectory(dir=self.user_dir) as temporary_dir:
+            with tempfile.TemporaryDirectory(prefix="paper-reader-translation-") as temporary_dir:
                 for index, context in enumerate(images, start=1):
                     image_path = Path(temporary_dir) / f"trusted-pdf-page-{index:02d}.png"
                     self.render_pdf_page(context, image_path)
@@ -1048,7 +1237,7 @@ class ReaderState:
             "created_at": now_iso(),
             "updated_at": now_iso(),
         }
-        manifest = load_json(self.translation_manifest_path(source_id), default)
+        manifest = self.load_translation_json(self.translation_manifest_path(source_id), default)
         if manifest.get("pdf_sha256") != metadata["pdf_sha256"] or manifest.get("protocol_version") != TRANSLATION_PROTOCOL_VERSION:
             return default
         # Adding source maps is backward compatible with existing page caches
@@ -1069,7 +1258,7 @@ class ReaderState:
             "pages": [],
             "glossary": [],
         }
-        source_map = load_json(self.translation_source_map_path(source_id), default)
+        source_map = self.load_translation_json(self.translation_source_map_path(source_id), default)
         if (
             source_map.get("pdf_sha256") != metadata["pdf_sha256"]
             or source_map.get("page_count") != metadata["page_count"]
@@ -1080,7 +1269,9 @@ class ReaderState:
         return source_map
 
     def cached_translation(self, context: dict, source_text: str) -> dict | None:
-        cached = load_json(self.translation_page_path(context["source_id"], context["page"]), None)
+        cached = self.load_translation_json(
+            self.translation_page_path(context["source_id"], context["page"]), None
+        )
         if not isinstance(cached, dict):
             return None
         metadata = self.source_metadata(context["source_id"])
@@ -1426,7 +1617,7 @@ class ReaderState:
             (previous_tail, model_source_text, next_head), literals = self.mask_translation_literals(
                 previous_tail, source_text, next_head
             )
-        glossary = load_json(self.translation_glossary_path(source_id), {"terms": {}})
+        glossary = self.load_translation_json(self.translation_glossary_path(source_id), {"terms": {}})
         prompt_metadata = {
             "source_id": source_id,
             "title": metadata["title"],
@@ -1535,7 +1726,7 @@ PDF 文本提取对公式和符号不可靠。{visual_math_instruction}
             translation_fallback = RETRANSLATION_FALLBACK_MODE
         if literals:
             answer = self.restore_translation_literals(answer, literals)
-        return self.save_translation_result(
+        saved = self.save_translation_result(
             source_id,
             page,
             force,
@@ -1548,6 +1739,9 @@ PDF 文本提取对公式和符号不可靠。{visual_math_instruction}
             reasoning_effort=reasoning_effort,
             translation_fallback=translation_fallback,
         )
+        if cancel_event is None:
+            self.mark_manual_translation_success(source_id)
+        return saved
 
     def save_translation_result(
         self,
@@ -1572,7 +1766,7 @@ PDF 文本提取对公式和符号不可靠。{visual_math_instruction}
         with self.lock:
             # Concurrent full-PDF workers merge into the newest glossary
             # instead of overwriting terms saved by another completed page.
-            glossary = load_json(self.translation_glossary_path(source_id), {"terms": {}})
+            glossary = self.load_translation_json(self.translation_glossary_path(source_id), {"terms": {}})
             terms = glossary.setdefault("terms", {})
             for update in result["glossary_updates"]:
                 key = update["term"].casefold()
@@ -1586,7 +1780,7 @@ PDF 文本提取对公式和符号不可靠。{visual_math_instruction}
                         "first_page": existing.get("first_page", page) if existing else page,
                     }
             glossary["updated_at"] = now_iso()
-            atomic_json(self.translation_glossary_path(source_id), glossary)
+            self.save_translation_json(self.translation_glossary_path(source_id), glossary)
             saved = {
                 "source_id": source_id,
                 "page": page,
@@ -1602,14 +1796,14 @@ PDF 文本提取对公式和符号不可靠。{visual_math_instruction}
                 "translation_fallback": translation_fallback,
                 "visual_input": visual_input,
             }
-            atomic_json(self.translation_page_path(source_id, page), saved)
+            self.save_translation_json(self.translation_page_path(source_id, page), saved)
             manifest = self.translation_manifest(source_id)
             manifest["updated_at"] = now_iso()
             manifest.pop("session_id", None)
             manifest["translation_backend"] = "responses-api"
             manifest["translation_model"] = translation_model
             manifest["translation_reasoning_effort"] = reasoning_effort
-            atomic_json(self.translation_manifest_path(source_id), manifest)
+            self.save_translation_json(self.translation_manifest_path(source_id), manifest)
             source_map = self.translation_source_map(source_id)
             pages = {}
             for entry in source_map.get("pages", []):
@@ -1638,11 +1832,8 @@ PDF 文本提取对公式和符号不可靠。{visual_math_instruction}
                 for item in sorted(terms.values(), key=lambda entry: str(entry.get("term", "")).casefold())
                 if item.get("term") and item.get("translation")
             ]
-            atomic_json(self.translation_source_map_path(source_id), source_map)
-            history_path = self.translation_dir(source_id) / "history.jsonl"
-            history_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-            with history_path.open("a", encoding="utf-8") as stream:
-                stream.write(json.dumps({
+            self.save_translation_json(self.translation_source_map_path(source_id), source_map)
+            self.append_translation_history(source_id, {
                     "action": "translate",
                     "page": page,
                     "force": force,
@@ -1653,8 +1844,7 @@ PDF 文本提取对公式和符号不可靠。{visual_math_instruction}
                     "visual_input": visual_input,
                     "response_id": response_id or None,
                     "created_at": now_iso(),
-                }, ensure_ascii=False) + "\n")
-            os.chmod(history_path, 0o600)
+                })
             return saved
 
     def doc_key(self, document_id: str) -> str:
@@ -1701,7 +1891,9 @@ PDF 文本提取对公式和符号不可靠。{visual_math_instruction}
         return False
 
     def revisions(self, document_id: str) -> dict:
-        saved = load_json(self.revisions_path(document_id), {"document_id": document_id, "items": []})
+        saved = self.load_runtime_json(
+            self.revisions_path(document_id), {"document_id": document_id, "items": []}
+        )
         # Legacy builds appended every manual save. Keep only the newest value
         # for identical or overlapping source selections so overlays never stack.
         seen_manual = set()
@@ -1723,13 +1915,16 @@ PDF 文本提取对公式和符号不可靠。{visual_math_instruction}
         return saved
 
     def revision_discussions(self, document_id: str) -> dict:
-        return load_json(self.revision_discussions_path(document_id), {"document_id": document_id, "items": []})
+        return self.load_runtime_json(
+            self.revision_discussions_path(document_id),
+            {"document_id": document_id, "items": []},
+        )
 
     def save_revision_discussions(self, document_id: str, value: dict) -> None:
-        atomic_json(self.revision_discussions_path(document_id), value)
+        self.save_runtime_json(self.revision_discussions_path(document_id), value)
 
     def revision_settings(self) -> dict:
-        value = load_json(self.revision_settings_path, {})
+        value = self.load_runtime_json(self.revision_settings_path, {})
         model = str(value.get("model", DEFAULT_TRANSLATION_MODEL))
         effort = str(value.get("effort", DEFAULT_TRANSLATION_REASONING_EFFORT))
         if model not in REVISION_MODELS:
@@ -1745,12 +1940,12 @@ PDF 文本提取对公式和符号不可靠。{visual_math_instruction}
             raise ApiError(HTTPStatus.BAD_REQUEST, "修订模型配置无效")
         value = {"model": model, "effort": effort, "updated_at": now_iso()}
         with self.lock:
-            atomic_json(self.revision_settings_path, value)
+            self.save_runtime_json(self.revision_settings_path, value)
         return value
 
     def knowledge_settings(self, document_id: str) -> dict:
         self.document_path(document_id)
-        value = load_json(self.knowledge_settings_path(document_id), {})
+        value = self.load_runtime_json(self.knowledge_settings_path(document_id), {})
         model = str(value.get("model", DEFAULT_KNOWLEDGE_MODEL))
         effort = str(value.get("effort", DEFAULT_KNOWLEDGE_REASONING_EFFORT))
         if model not in REVISION_MODELS:
@@ -1768,7 +1963,7 @@ PDF 文本提取对公式和符号不可靠。{visual_math_instruction}
             raise ApiError(HTTPStatus.BAD_REQUEST, "知识问答模型配置无效")
         value = {"model": model, "effort": effort, "updated_at": now_iso()}
         with self.lock:
-            atomic_json(self.knowledge_settings_path(document_id), value)
+            self.save_runtime_json(self.knowledge_settings_path(document_id), value)
         return value
 
     @staticmethod
@@ -2081,7 +2276,7 @@ PDF 文本提取对公式和符号不可靠。{visual_math_instruction}
                 item["updated_at"] = now_iso()
             saved["items"] = [previous for previous in saved.get("items", []) if previous not in matching]
             saved["items"].append(item)
-            atomic_json(self.revisions_path(document_id), saved)
+            self.save_runtime_json(self.revisions_path(document_id), saved)
         return saved
 
     def accept_revision(self, payload: dict) -> dict:
@@ -2120,7 +2315,7 @@ PDF 文本提取对公式和符号不可靠。{visual_math_instruction}
             item.update({"id": str(uuid.uuid4()), "status": "accepted", "accepted_at": now_iso()})
             saved = self.revisions(document_id)
             saved.setdefault("items", []).append(item)
-            atomic_json(self.revisions_path(document_id), saved)
+            self.save_runtime_json(self.revisions_path(document_id), saved)
             self.pending_revisions.pop(candidate_id, None)
             if source_discussion:
                 source_discussion["status"] = "accepted"
@@ -2152,22 +2347,18 @@ PDF 文本提取对公式和符号不可靠。{visual_math_instruction}
             saved["items"] = [item for item in previous if item.get("id") != revision_id]
             if len(saved["items"]) == len(previous):
                 raise ApiError(HTTPStatus.NOT_FOUND, "修订不存在")
-            atomic_json(self.revisions_path(document_id), saved)
+            self.save_runtime_json(self.revisions_path(document_id), saved)
             return saved
 
     def append_chat(self, document_id: str, thread_id: str, message: dict) -> None:
-        path = self.chat_path(document_id, thread_id)
-        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        with path.open("a", encoding="utf-8") as stream:
-            stream.write(json.dumps(message, ensure_ascii=False) + "\n")
-        os.chmod(path, 0o600)
+        self.append_runtime_jsonl(self.chat_path(document_id, thread_id), message)
 
     def chat_history(self, document_id: str, thread_id: str) -> list[dict]:
         path = self.chat_path(document_id, thread_id)
-        if not path.is_file():
+        if not self.runtime_exists(path):
             return []
         messages = []
-        for line in path.read_text(encoding="utf-8").splitlines()[-200:]:
+        for line in self.read_runtime_text(path).splitlines()[-200:]:
             try:
                 messages.append(json.loads(line))
             except json.JSONDecodeError:
@@ -2175,7 +2366,7 @@ PDF 文本提取对公式和符号不可靠。{visual_math_instruction}
         return messages
 
     def sessions(self) -> dict:
-        return load_json(self.sessions_path, {})
+        return self.load_runtime_json(self.sessions_path, {})
 
     def document_threads(self, document_id: str) -> dict:
         sessions = self.sessions()
@@ -2193,7 +2384,7 @@ PDF 文本提取对公式和符号不可靠。{visual_math_instruction}
 
         legacy_path = self.chat_path(document_id)
         session_id = saved.get("session_id") if isinstance(saved, dict) else None
-        if not legacy_path.is_file() and not session_id:
+        if not self.runtime_exists(legacy_path) and not session_id:
             return {"active_thread_id": None, "threads": []}
         thread_id = self.legacy_thread_id(document_id)
         return {
@@ -2212,7 +2403,7 @@ PDF 文本提取对公式和符号不可靠。{visual_math_instruction}
     def save_document_threads(self, document_id: str, saved: dict) -> None:
         sessions = self.sessions()
         sessions[document_id] = saved
-        atomic_json(self.sessions_path, sessions)
+        self.save_runtime_json(self.sessions_path, sessions)
 
     def thread_title(self, document_id: str, thread: dict) -> str:
         title = str(thread.get("title", "")).strip()
@@ -2305,8 +2496,7 @@ PDF 文本提取对公式和符号不可靠。{visual_math_instruction}
             if not thread:
                 raise ApiError(HTTPStatus.NOT_FOUND, "对话不存在或已经删除")
             path = self.chat_path(document_id, thread_id)
-            if path.is_file():
-                path.unlink()
+            self.delete_runtime(path)
             saved["threads"] = [item for item in saved["threads"] if item["id"] != thread_id]
             if saved.get("active_thread_id") == thread_id:
                 open_threads = [item for item in saved["threads"] if item.get("status") != "archived"]
@@ -2381,7 +2571,7 @@ PDF 文本提取对公式和符号不可靠。{visual_math_instruction}
         model: str | None = None,
         reasoning_effort: str | None = None,
     ) -> tuple[str, str]:
-        with tempfile.TemporaryDirectory(dir=self.user_dir) as temporary_dir:
+        with tempfile.TemporaryDirectory(prefix="paper-reader-question-") as temporary_dir:
             output_path = Path(temporary_dir) / "last-message.txt"
             image_paths = []
             for index, pdf_context in enumerate(pdf_contexts or [], start=1):
@@ -2747,18 +2937,25 @@ Reader 支持的回答格式：
             "session_id": source_thread.get("session_id") if source_thread else None,
         }
         with self.lock:
-            saved = load_json(self.faq_path(document_id), {"document_id": document_id, "items": []})
+            saved = self.load_runtime_json(
+                self.faq_path(document_id), {"document_id": document_id, "items": []}
+            )
             saved.setdefault("items", []).append(item)
             self.write_faq_files(document_id, saved)
-            history_path = self.user_dir / "faq-history.jsonl"
-            with history_path.open("a", encoding="utf-8") as stream:
-                stream.write(json.dumps({"action": "save_message", "document_id": document_id, "item": item, "created_at": now_iso()}, ensure_ascii=False) + "\n")
-            os.chmod(history_path, 0o600)
+            self.append_runtime_jsonl(
+                self.user_dir / "faq-history.jsonl",
+                {
+                    "action": "save_message",
+                    "document_id": document_id,
+                    "item": item,
+                    "created_at": now_iso(),
+                },
+            )
         return saved
 
     def write_faq_files(self, document_id: str, saved: dict) -> None:
         """Keep the machine-readable FAQ and its readable mirror in sync."""
-        atomic_json(self.faq_path(document_id), saved)
+        self.save_runtime_json(self.faq_path(document_id), saved)
         markdown = ["# 我的知识问答 FAQ", ""]
         for item in saved.get("items", []):
             markdown.extend([f"## {item['question']}", "", item["answer"], ""])
@@ -2772,9 +2969,7 @@ Reader 支持的回答格式：
                 )
                 markdown.extend([f"证据：{references}", ""])
             markdown.extend([f"知识类型：`{item['knowledge_type']}`", ""])
-        markdown_path = self.faq_markdown_path(document_id)
-        markdown_path.write_text("\n".join(markdown), encoding="utf-8")
-        os.chmod(markdown_path, 0o600)
+        self.write_runtime_text(self.faq_markdown_path(document_id), "\n".join(markdown))
 
     def edit_faq(self, payload: dict) -> dict:
         document_id = str(payload.get("document_id", ""))
@@ -2786,16 +2981,23 @@ Reader 支持的回答格式：
         if not faq_id or not 4 <= len(question) <= 300 or not 10 <= len(answer) <= 5000 or len(note) > 2000:
             raise ApiError(HTTPStatus.BAD_REQUEST, "FAQ 卡片内容无效")
         with self.lock:
-            saved = load_json(self.faq_path(document_id), {"document_id": document_id, "items": []})
+            saved = self.load_runtime_json(
+                self.faq_path(document_id), {"document_id": document_id, "items": []}
+            )
             item = next((item for item in saved.get("items", []) if str(item.get("id", "")) == faq_id), None)
             if not item:
                 raise ApiError(HTTPStatus.NOT_FOUND, "FAQ 不存在或已经删除")
             item.update({"question": question, "answer": answer, "note": note, "updated_at": now_iso()})
             self.write_faq_files(document_id, saved)
-            history_path = self.user_dir / "faq-history.jsonl"
-            with history_path.open("a", encoding="utf-8") as stream:
-                stream.write(json.dumps({"action": "edit", "document_id": document_id, "faq_id": faq_id, "created_at": now_iso()}, ensure_ascii=False) + "\n")
-            os.chmod(history_path, 0o600)
+            self.append_runtime_jsonl(
+                self.user_dir / "faq-history.jsonl",
+                {
+                    "action": "edit",
+                    "document_id": document_id,
+                    "faq_id": faq_id,
+                    "created_at": now_iso(),
+                },
+            )
             return saved
 
     def delete_faq(self, payload: dict) -> dict:
@@ -2805,17 +3007,24 @@ Reader 支持的回答格式：
         if not faq_id or len(faq_id) > 128:
             raise ApiError(HTTPStatus.BAD_REQUEST, "FAQ 标识无效")
         with self.lock:
-            saved = load_json(self.faq_path(document_id), {"document_id": document_id, "items": []})
+            saved = self.load_runtime_json(
+                self.faq_path(document_id), {"document_id": document_id, "items": []}
+            )
             previous = saved.get("items", [])
             remaining = [item for item in previous if str(item.get("id", "")) != faq_id]
             if len(remaining) == len(previous):
                 raise ApiError(HTTPStatus.NOT_FOUND, "FAQ 不存在或已经删除")
             saved["items"] = remaining
             self.write_faq_files(document_id, saved)
-            history_path = self.user_dir / "faq-history.jsonl"
-            with history_path.open("a", encoding="utf-8") as stream:
-                stream.write(json.dumps({"action": "delete", "document_id": document_id, "faq_id": faq_id, "created_at": now_iso()}, ensure_ascii=False) + "\n")
-            os.chmod(history_path, 0o600)
+            self.append_runtime_jsonl(
+                self.user_dir / "faq-history.jsonl",
+                {
+                    "action": "delete",
+                    "document_id": document_id,
+                    "faq_id": faq_id,
+                    "created_at": now_iso(),
+                },
+            )
             return saved
 
     def page_state(self, document_id: str, selected_thread_id: str = "") -> dict:
@@ -2839,7 +3048,9 @@ Reader 支持的回答格式：
             "threads": self.public_threads(document_id, saved),
             "knowledge_context_policy": KNOWLEDGE_CONTEXT_POLICY,
             "messages": self.chat_history(document_id, selected_thread_id) if selected_thread_id else [],
-            "faq": load_json(self.faq_path(document_id), {"document_id": document_id, "items": []}),
+            "faq": self.load_runtime_json(
+                self.faq_path(document_id), {"document_id": document_id, "items": []}
+            ),
             "revisions": self.revisions(document_id),
             "revision_settings": self.revision_settings(),
             "knowledge_settings": self.knowledge_settings(document_id),
@@ -2847,12 +3058,9 @@ Reader 支持的回答格式：
         }
 
 
-class ReaderHandler(SimpleHTTPRequestHandler):
+class ReaderHandler(BaseHTTPRequestHandler):
     server_version = "ResearchReader/1"
-
-    def __init__(self, *args, **kwargs) -> None:
-        server = args[2]
-        super().__init__(*args, directory=str(server.state.site_dir), **kwargs)
+    protocol_version = "HTTP/1.1"
 
     @property
     def state(self) -> ReaderState:
@@ -2935,7 +3143,16 @@ class ReaderHandler(SimpleHTTPRequestHandler):
             except ApiError as error:
                 self.send_json(error.status, {"error": error.message})
             return
-        super().do_GET()
+        if not send_site_entry(self, self.state.site_store, parsed.path):
+            self.send_error(HTTPStatus.NOT_FOUND)
+
+    def do_HEAD(self) -> None:
+        parsed = urlparse(self.path)
+        if parsed.path.startswith("/api/"):
+            self.send_error(HTTPStatus.METHOD_NOT_ALLOWED)
+            return
+        if not send_site_entry(self, self.state.site_store, parsed.path, head_only=True):
+            self.send_error(HTTPStatus.NOT_FOUND)
 
     def do_POST(self) -> None:
         try:

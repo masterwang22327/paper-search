@@ -206,6 +206,9 @@
   display: inline;
   margin: 0;
   overflow: visible;
+  overflow-wrap: normal;
+  white-space: nowrap;
+  word-break: normal;
 }
 
 .knowledge-rich-text .knowledge-math-inline > mjx-container {
@@ -213,6 +216,9 @@
   width: auto;
   margin: 0 !important;
   padding: 0;
+  overflow-wrap: normal;
+  white-space: nowrap;
+  word-break: normal;
 }
 
 .knowledge-markdown-table {

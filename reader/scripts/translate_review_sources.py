@@ -16,9 +16,13 @@ from pathlib import Path
 
 import yaml
 
-
 READER_DIR = Path(__file__).resolve().parents[1]
 REPO_DIR = READER_DIR.parent
+sys.path.insert(0, str(READER_DIR))
+
+from runtime_store import RuntimeStore
+
+
 DEFAULT_TASK_ID = "paper-research-base-knowledge-about-llm-20260717"
 PDF_CITATION = re.compile(r"\[PDF:([A-Za-z0-9._-]+)\s+p", re.IGNORECASE)
 TERMINAL_STATUSES = {"completed", "partial", "failed", "stopped", "interrupted", "idle"}
@@ -112,18 +116,29 @@ class ReaderApi:
         )
 
 
-def save_queue(path: Path, state: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    temporary.replace(path)
+def save_queue(store: RuntimeStore, key: str, legacy_path: Path, state: dict) -> None:
+    if not store.contains(key) and legacy_path.is_file():
+        stat = legacy_path.stat()
+        store.write_bytes(
+            key,
+            legacy_path.read_bytes(),
+            mode=stat.st_mode,
+            mtime_ns=stat.st_mtime_ns,
+        )
+    store.write_json(key, state)
+    if legacy_path.is_file():
+        legacy_path.unlink()
 
 
 def run(args: argparse.Namespace) -> None:
     task_dir = (REPO_DIR / "tasks" / args.task_id).resolve()
     sources = target_sources(task_dir)
     api = ReaderApi(args.base_url)
-    queue_path = READER_DIR / "user-data" / args.task_id / "translation-queue.json"
+    user_dir = READER_DIR / "user-data" / args.task_id
+    user_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    runtime_store = RuntimeStore(user_dir / "state.sqlite3")
+    queue_key = "translation-queue.json"
+    queue_path = user_dir / queue_key
     queue = {
         "task_id": args.task_id,
         "status": "running",
@@ -132,7 +147,7 @@ def run(args: argparse.Namespace) -> None:
         "started_at": now_iso(),
         "updated_at": now_iso(),
     }
-    save_queue(queue_path, queue)
+    save_queue(runtime_store, queue_key, queue_path, queue)
 
     current_source = None
     try:
@@ -142,11 +157,7 @@ def run(args: argparse.Namespace) -> None:
             total = int(status["total"])
             completed = int(status["completed"])
             if completed < total and "content_filter" in str(status.get("last_error", "")):
-                pages_dir = READER_DIR / "user-data" / args.task_id / "translations" / source_id / "pages"
-                missing_pages = [
-                    page for page in range(1, total + 1)
-                    if not (pages_dir / f"{page:04d}.json").is_file()
-                ]
+                missing_pages = [int(page) for page in status.get("missing_pages", [])]
                 print(
                     f"[{source_index}/{len(sources)}] resume text-only fallback {source_id}: "
                     f"pages={','.join(map(str, missing_pages))}",
@@ -195,7 +206,7 @@ def run(args: argparse.Namespace) -> None:
                         source_status=status.get("status"),
                         updated_at=now_iso(),
                     )
-                    save_queue(queue_path, queue)
+                    save_queue(runtime_store, queue_key, queue_path, queue)
                     if status.get("status") in TERMINAL_STATUSES:
                         break
 
@@ -211,11 +222,7 @@ def run(args: argparse.Namespace) -> None:
                 if no_progress_rounds >= args.max_no_progress_rounds:
                     last_error = str(status.get("last_error", ""))
                     if "content_filter" in last_error:
-                        pages_dir = READER_DIR / "user-data" / args.task_id / "translations" / source_id / "pages"
-                        missing_pages = [
-                            page for page in range(1, total + 1)
-                            if not (pages_dir / f"{page:04d}.json").is_file()
-                        ]
+                        missing_pages = [int(page) for page in status.get("missing_pages", [])]
                         print(
                             f"[{source_index}/{len(sources)}] text-only fallback {source_id}: "
                             f"pages={','.join(map(str, missing_pages))}",
@@ -238,17 +245,17 @@ def run(args: argparse.Namespace) -> None:
                 )
 
         queue.update(status="completed", current_source=None, finished_at=now_iso(), updated_at=now_iso())
-        save_queue(queue_path, queue)
+        save_queue(runtime_store, queue_key, queue_path, queue)
         print(f"Translation queue completed: {len(sources)} sources", flush=True)
     except KeyboardInterrupt:
         if current_source:
             api.stop(current_source)
         queue.update(status="stopped", current_source=current_source, updated_at=now_iso())
-        save_queue(queue_path, queue)
+        save_queue(runtime_store, queue_key, queue_path, queue)
         raise
     except Exception as error:
         queue.update(status="failed", current_source=current_source, error=str(error), updated_at=now_iso())
-        save_queue(queue_path, queue)
+        save_queue(runtime_store, queue_key, queue_path, queue)
         raise
 
 

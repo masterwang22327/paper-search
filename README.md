@@ -12,8 +12,8 @@ YOLO 模式 Codex CLI，按一次 Enter。
 本机运行状态，不会进入 Git：
 
 - `tasks/`：长期研究任务、下载来源和报告正文；仓库只保留 `tasks/.gitkeep`；
-- `reader/user-data/`：聊天、Codex Session、FAQ、修订和翻译缓存；
-- `reader/docs/`、`reader/site/`：Reader 的生成目录；
+- `reader/user-data/`：聊天、Codex Session、FAQ、修订、翻译缓存和生成站点，持久化为三个 SQLite 文件；
+- Reader 构建中间目录仅在输入变化时位于系统临时目录，完成后直接导入 SQLite；正常启动按指纹复用数据库；
 - `reader/.venv/`：本地 Python 环境；
 - `.env*`、认证 JSON、私钥和证书。
 
@@ -136,18 +136,20 @@ REPORT.md                          # 持续整合的最终报告
 SOURCES.md                         # 稳定 ID、版本、证据位置和本地路径
 RUN_HISTORY.md                     # 所有不可变 run 合同和终止记录
 papers/                            # 重要论文的单篇笔记
-sources/                           # PDF、文本、元数据和工件证据
+sources/                           # canonical PDF；本轮新增证据可短暂以普通文件写入
+artifacts.sqlite3                  # 非 PDF 来源工件、已完成 handoff、历史 run/work 的逻辑文件库
 state/current-run.json             # 当前 RUN_ID 指针
 state/runtime.json                 # 兼容指针；真实状态位于 run 目录
-state/runs/<run-id>/runtime.json   # 当前 run 的截止/Goal/额度控制状态
+state/runs/<run-id>/runtime.json   # 当前 run 的截止/Goal/额度控制热状态
 state/runs/<run-id>/quota.json     # 当前 run 最近一次外部额度快照
 state/runs/<run-id>/events.jsonl   # 当前 run 守卫决策记录
-state/handoffs/                    # 可选原生 subagent 交接
+state/handoffs/                    # 本轮可选原生 subagent 交接；收尾后进入 artifacts.sqlite3
 ```
 
-旧格式任务第一次执行 `init`、`status`、`gate` 或 `validate` 时会自动迁移 runtime/quota/events；原有
-REPORT/SOURCES/papers/sources 不移动、不复制。旧 TASK.md 中可能残留的首 run 截止/预算只作历史快照；
-新 run 以 RUN_HISTORY.md 和 `state/runs/<run-id>/runtime.json` 为准。
+旧格式任务第一次执行 `init`、`status`、`gate` 或 `validate` 时会自动迁移 runtime/quota/events。任务级
+`artifacts.sqlite3` 仍以原相对路径保存完整内容；`research_runtime validate` 会同时校验数据库中的历史 run。
+旧 TASK.md 中可能残留的首 run 截止/预算只作历史快照；新 run 以 RUN_HISTORY.md 和当前
+`state/runs/<run-id>/runtime.json` 为准。
 
 ## 人工查看
 
@@ -157,6 +159,13 @@ REPORT/SOURCES/papers/sources 不移动、不复制。旧 TASK.md 中可能残�
 python3 tools/research_runtime.py status <task-id>
 python3 tools/research_runtime.py validate <task-id>
 sed -n '1,220p' tasks/<task-id>/STATUS.md
+```
+
+按原路径查看已收拢的来源或历史交接，无需恢复整棵目录：
+
+```bash
+python3 reader/task_store.py list --task-dir tasks/<task-id> --key state/handoffs
+python3 reader/task_store.py read --task-dir tasks/<task-id> --key sources/<stable-id>/evidence.md
 ```
 
 手动刷新外部额度和下一步决策：

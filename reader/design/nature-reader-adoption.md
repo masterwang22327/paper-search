@@ -67,7 +67,7 @@
 建议目标位置为：
 
 ```text
-user-data/<TASK_ID>/translations/<SOURCE_ID>/source-map.json
+user-data/<TASK_ID>/translations.sqlite3（逻辑键：`<SOURCE_ID>/source-map.json`）
 ```
 
 这是用户生成的翻译状态，不能写回只读 `tasks/`。当 PDF 哈希或 source-map 协议版本变化时必须失效或显式迁移，不能静默复用旧锚点。
@@ -119,7 +119,7 @@ user-data/<TASK_ID>/translations/<SOURCE_ID>/source-map.json
 
 - `schemas/translation-page.schema.json` 接受可选 `blocks`，并保留旧的整页 `translation` 字段。
 - 服务端根据物理页、块类型和页内顺序生成稳定 ID，例如 `p0003-c001`、`p0003-b001`；模型不能伪造全局 ID。
-- 每个 PDF 版本在 `user-data/<TASK_ID>/translations/<SOURCE_ID>/source-map.json` 保存已完成页、块内容、警告和术语快照。
+- 每个 PDF 版本在 `user-data/<TASK_ID>/translations.sqlite3` 的 `<SOURCE_ID>/source-map.json` 逻辑键下保存已完成页、块内容、警告和术语快照。
 - `GET /api/translation/source-map` 提供当前固定 PDF 版本的 source map；PDF SHA-256、页数和版本不匹配时不复用旧 map。
 - 没有返回 `blocks` 的旧缓存会在读取时生成确定性的页面级兜底块，旧 Session 和页面译文不需要全部重做。
 - PDF 翻译面板按块显示自然标签、稳定 ID 和置信度；点击块可回查对应物理页，有可靠 `bbox` 时显示 PDF 区域热点；没有块数据时仍显示原有整页布局。

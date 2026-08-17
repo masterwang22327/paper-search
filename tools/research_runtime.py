@@ -30,6 +30,12 @@ from zoneinfo import ZoneInfo
 ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE = ROOT.parent
 TASKS_ROOT = ROOT / "tasks"
+READER_DIR = ROOT / "reader"
+sys.path.insert(0, str(READER_DIR))
+
+from task_store import TaskArtifactStore
+
+
 TOKEN_CHECKER = WORKSPACE / "check_token.py"
 TOKEN_LOCK = Path(tempfile.gettempdir()) / "paper-research-token-monitor.lock"
 TZ = ZoneInfo("Asia/Shanghai")
@@ -42,6 +48,24 @@ REQUIRED_DIRS = ("sources", "papers", "state", "state/runs", "state/handoffs")
 
 class RuntimeError_(RuntimeError):
     """Concise, user-facing runtime error."""
+
+
+_ARTIFACT_STORES: dict[Path, TaskArtifactStore | None] = {}
+
+
+def artifact_store_for(path: Path) -> TaskArtifactStore | None:
+    try:
+        relative = path.resolve().relative_to(TASKS_ROOT.resolve())
+    except ValueError:
+        return None
+    if not relative.parts:
+        return None
+    task = (TASKS_ROOT / relative.parts[0]).resolve()
+    store = _ARTIFACT_STORES.get(task)
+    if store is None and TaskArtifactStore.database_path(task).is_file():
+        store = TaskArtifactStore.open_existing(task)
+        _ARTIFACT_STORES[task] = store
+    return store
 
 
 def now_bjt() -> datetime:
@@ -146,7 +170,15 @@ def write_json(path: Path, payload: dict[str, Any], mode: int = 0o644) -> None:
 
 def load_json(path: Path) -> dict[str, Any]:
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        if path.is_file():
+            content = path.read_text(encoding="utf-8")
+        else:
+            store = artifact_store_for(path)
+            stored = store.read_path_bytes(path) if store is not None else None
+            if stored is None:
+                raise FileNotFoundError(path)
+            content = stored.decode("utf-8")
+        payload = json.loads(content)
     except FileNotFoundError as error:
         raise RuntimeError_(f"missing runtime file: {path}") from error
     except json.JSONDecodeError as error:
@@ -923,6 +955,7 @@ def validate(args: argparse.Namespace) -> dict[str, Any]:
             errors.append(f"missing current run runtime: {run_id}")
     run_records: dict[str, dict[str, Any]] = {}
     run_root = runs_dir(path)
+    run_ids: set[str] = set()
     if run_root.is_dir():
         for entry in sorted(run_root.iterdir()):
             if not entry.is_dir():
@@ -931,17 +964,28 @@ def validate(args: argparse.Namespace) -> dict[str, Any]:
             if not RUN_ID_RE.fullmatch(entry.name):
                 errors.append(f"invalid historical run directory: {entry.name}")
                 continue
-            record_path = entry / "runtime.json"
-            try:
-                record = load_json(record_path)
-            except RuntimeError_ as error:
-                errors.append(str(error))
-                continue
-            if record.get("schema_version") != SCHEMA_VERSION:
-                errors.append(f"unsupported historical run schema: {entry.name}")
-            if record.get("task_id") != args.task_id or record.get("run_id") != entry.name:
-                errors.append(f"historical run identity mismatch: {entry.name}")
-            run_records[entry.name] = record
+            run_ids.add(entry.name)
+    store = artifact_store_for(path)
+    if store is not None:
+        for key in store.list_keys("state/runs"):
+            parts = Path(key).parts
+            if len(parts) >= 3 and parts[:2] == ("state", "runs"):
+                run_ids.add(parts[2])
+    for run_id in sorted(run_ids):
+        if not RUN_ID_RE.fullmatch(run_id):
+            errors.append(f"invalid historical run directory: {run_id}")
+            continue
+        record_path = run_runtime_path(path, run_id)
+        try:
+            record = load_json(record_path)
+        except RuntimeError_ as error:
+            errors.append(str(error))
+            continue
+        if record.get("schema_version") != SCHEMA_VERSION:
+            errors.append(f"unsupported historical run schema: {run_id}")
+        if record.get("task_id") != args.task_id or record.get("run_id") != run_id:
+            errors.append(f"historical run identity mismatch: {run_id}")
+        run_records[run_id] = record
     for run_id, record in run_records.items():
         predecessor = record.get("predecessor_run_id")
         if predecessor is not None and predecessor not in run_records:

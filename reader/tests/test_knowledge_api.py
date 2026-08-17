@@ -27,6 +27,8 @@ import server as reader_server
 
 
 def check_translation_api_key_policy() -> None:
+    assert reader_server.DEFAULT_TRANSLATION_API_URL == "https://www.sevnx.one/v1/responses"
+
     with mock.patch.dict(
         os.environ,
         {
@@ -69,6 +71,17 @@ def check_translation_api_key_policy() -> None:
             assert reader_server.ReaderState.load_translation_api_key(
                 "https://relay.example/v2/responses"
             ) is None
+
+        (codex_home / "config.toml").write_text(
+            'model_provider = "OpenAI"\n\n'
+            '[model_providers.OpenAI]\n'
+            'base_url = "https://www.sevnx.one/v1"\n',
+            encoding="utf-8",
+        )
+        with mock.patch.dict(os.environ, {"CODEX_HOME": str(codex_home)}, clear=True):
+            assert reader_server.ReaderState.load_translation_api_key(
+                reader_server.DEFAULT_TRANSLATION_API_URL
+            ) == "codex-provider-key"
 
 
 def check_codex_error_messages() -> None:
@@ -126,6 +139,26 @@ def check_full_translation_terminal_state() -> None:
         assert "unexpected page failure" in job_state["last_error"]
         assert saved_states[-1]["status"] == "partial"
 
+    with tempfile.TemporaryDirectory() as temporary:
+        job_path = Path(temporary) / "full-translation.json"
+        job_path.write_text(json.dumps({
+            "source_id": "source",
+            "status": "partial",
+            "completed": 0,
+            "total": 30,
+            "failures": 30,
+            "last_error": "第 28 页：模型 API Key 未配置",
+        }), encoding="utf-8")
+        state.translation_job_path = lambda source_id: job_path
+        state.cached_translation_page_count = lambda source_id: 1
+        state.source_metadata = lambda source_id: {"page_count": 30}
+        state.mark_manual_translation_success("source")
+        recovered = json.loads(job_path.read_text(encoding="utf-8"))
+        assert recovered["status"] == "idle"
+        assert recovered["completed"] == 1
+        assert recovered["failures"] == 0
+        assert recovered["last_error"] == ""
+
 
 def check_retranslation_compact_fallback() -> None:
     with tempfile.TemporaryDirectory() as temporary:
@@ -148,6 +181,7 @@ def check_retranslation_compact_fallback() -> None:
             encoding="utf-8",
         )
         state = reader_server.ReaderState.__new__(reader_server.ReaderState)
+        state.mark_manual_translation_success = lambda source_id: None
         state.translation_model = "gpt-5.6-terra"
         state.retranslation_model = "gpt-5.6-sol"
         state.retranslation_reasoning_effort = "high"
@@ -261,7 +295,9 @@ def run() -> None:
     check_codex_error_messages()
     check_full_translation_terminal_state()
     check_retranslation_compact_fallback()
-    manifest = json.loads((READER_DIR / "site" / "context-manifest.json").read_text())
+    site_database = READER_DIR / "user-data" / TASK_ID / "site.sqlite3"
+    site_store = reader_server.SiteStore(site_database, READER_DIR.parent)
+    manifest = site_store.load_json("context-manifest.json", {})
     document_id = "papers/arxiv-1706.03762.md"
     document = manifest["documents"][document_id]
     block_id, block_text = next(
@@ -288,6 +324,7 @@ def run() -> None:
                 "FAKE_CODEX_READY_FILE": str(delayed_codex_ready),
                 "FAKE_RESPONSES_LOG": str(responses_log),
                 "READER_USER_DATA_DIR": str(root / "user-data"),
+                "READER_SITE_DATABASE": str(site_database),
                 "READER_TRANSLATION_API_URL": f"http://127.0.0.1:{responses_port}/v1/responses",
                 "READER_TRANSLATION_API_KEY": "test-translation-key",
                 "READER_TRANSLATION_MODEL": "gpt-5.6-terra",
@@ -574,25 +611,26 @@ def run() -> None:
                 token,
             )
             assert translated_bulk["page"] == 5
-            translation_files = list(
-                (root / "user-data" / TASK_ID / "translations" / "arxiv-1706.03762v7" / "pages").glob("*.json")
+            translation_store = reader_server.TranslationStore(
+                root / "user-data" / TASK_ID / "translations.sqlite3"
             )
-            assert len(translation_files) == 4
-            translation_manifest = json.loads(
-                (root / "user-data" / TASK_ID / "translations" / "arxiv-1706.03762v7" / "manifest.json").read_text()
+            stored_pages = translation_store.list_keys("arxiv-1706.03762v7/pages")
+            assert len(stored_pages) == 3 and legacy_path.is_file()
+            translation_manifest = translation_store.load_json(
+                "arxiv-1706.03762v7/manifest.json", {}
             )
             assert "session_id" not in translation_manifest
             assert translation_manifest["translation_backend"] == "responses-api"
             assert translation_manifest["translation_model"] == "gpt-5.6-terra"
             assert translation_manifest["source_map_path"] == "source-map.json"
-            source_map = json.loads(
-                (root / "user-data" / TASK_ID / "translations" / "arxiv-1706.03762v7" / "source-map.json").read_text()
+            source_map = translation_store.load_json(
+                "arxiv-1706.03762v7/source-map.json", {}
             )
             assert source_map["protocol_version"] == "paper-reader-translation-v1"
             assert [page["physical_page"] for page in source_map["pages"]] == [3, 4, 5]
             assert source_map["pages"][0]["blocks"][0]["id"] == "p0003-f001"
-            glossary = json.loads(
-                (root / "user-data" / TASK_ID / "translations" / "arxiv-1706.03762v7" / "glossary.json").read_text()
+            glossary = translation_store.load_json(
+                "arxiv-1706.03762v7/glossary.json", {}
             )
             assert glossary["terms"]["self-attention"]["translation"] == "自注意力"
 
@@ -628,8 +666,11 @@ def run() -> None:
                 f"{origin}/api/state?document_id={urllib.parse.quote(document_id)}"
             )
             assert state_after_edit["faq"]["items"][0]["question"].startswith("训练并行")
-            markdown_files = list((root / "user-data" / TASK_ID / "faq").glob("*.md"))
-            assert len(markdown_files) == 1 and "重点复习" in markdown_files[0].read_text()
+            runtime_store = reader_server.RuntimeStore(
+                root / "user-data" / TASK_ID / "state.sqlite3"
+            )
+            faq_markdown_key = f"faq/{hashlib.sha256(document_id.encode()).hexdigest()[:20]}.md"
+            assert "重点复习" in runtime_store.read_text(faq_markdown_key, "")
 
             deleted = request(
                 f"{origin}/api/faq/delete",
@@ -638,8 +679,8 @@ def run() -> None:
                 token,
             )
             assert deleted["items"] == []
-            assert "训练并行" not in markdown_files[0].read_text()
-            history = (root / "user-data" / TASK_ID / "faq-history.jsonl").read_text()
+            assert "训练并行" not in runtime_store.read_text(faq_markdown_key, "")
+            history = runtime_store.read_text("faq-history.jsonl", "")
             assert '"action": "save_message"' in history
             assert '"action": "edit"' in history
             assert '"action": "delete"' in history and faq_id in history

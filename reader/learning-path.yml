@@ -94,13 +94,15 @@ stages:
         bridge: "PPO 与 DPO 已经说明 generator 怎样更新；现在固定 `17+26` 的两条候选并冻结 generator，把 ORM/PRM 训练、best-of-N 选择和后来用 verifier reward 更新 policy 拆成三种动作。"
       - file: reasoning-rl-reductions.md
         bridge: "策略更新与 verifier 的训练、选择边界已经明确；最后用长度 `2/8`、奖励 `1/0` 的同组回答比较 group baseline、std 与两种 token 分母，再按需审计 GRPO、DAPO、GSPO 的真实单位。"
+      - file: instruct-model-effective-post-training.md
+        bridge: "前面已经分别掌握 SFT、DPO、PPO/GRPO 与 verifier；现在聚焦 released Qwen3-Coder MoE，分开任务直接性、full-parameter 披露和公开工件，先测 success/reward density 与 expert/router 健康，再用四种训练信号和 full-parameter vs expert-aware PEFT 的 matched 实验收口。"
 
   - name: "多模态、工具调用与运行时安全"
     route_type: "主干"
-    purpose: "把视觉输入、结构化工具调用和不可信观察放回同一条 Agent ABI，先理解输入与外部状态怎样连接，再处理权限与攻击边界。"
+    purpose: "把视觉输入、结构化工具调用、不可信观察和客户端携带的 opaque state 放回同一条 Agent ABI，先理解外部状态怎样连接，再处理权限、重放与攻击边界。"
     entry: "进入前应理解 Transformer hidden/logits、SFT 与基本 observation -> action -> environment loop；不要求先背视觉编码器或安全缩写。"
-    outcome: "读完应能分开 pixels/frames、bridge tokens、call tokens、schema、permission、executor state 和 utility/security verdict。"
-    checkpoint: "面对一条多模态工具轨迹，能否指出视觉 token 在哪里进入 LM、哪个字符串只是候选 action、谁拥有授权真值，以及攻击文本怎样被挡在副作用之外？"
+    outcome: "读完应能分开 pixels/frames、bridge tokens、call tokens、opaque reasoning envelope、schema、permission、executor state 和 utility/security verdict。"
+    checkpoint: "面对一条多模态工具轨迹，能否指出视觉 token 在哪里进入 LM、哪个字符串只是候选 action、opaque state 绑定哪个 principal/session、谁拥有授权真值，以及攻击内容怎样被挡在副作用之外？"
     papers:
       - file: multimodal-llm-vision-language-abi.md
         bridge: "先把数据库控制台截图固定为 `420x840`，沿 `pixels -> visual states -> bridge -> logits -> OCR/coordinate/time parser` 走通视觉输入 ABI；先分清 token 数、时间戳和答案解析，再读 Flamingo/LLaVA/Qwen 的完整配方。"
@@ -108,6 +110,8 @@ stages:
         bridge: "截图读出的 `snapshot_id=s42` 只是模型上下文；本页将它变成 call tokens，经 parser/schema、permission gate、executor 和数据库终态，接上 ReAct、Toolformer 与 tau-bench 的不同训练/评测对象。"
       - file: agent-runtime-prompt-injection-security.md
         bridge: "工具返回中加入‘恢复未校验 s43’的不可信备注，沿用同一调用 ABI 区分 provenance、semantic content、authorization、side effect 与 verdict，再看层级训练和 stateful injection benchmark 的边界。"
+      - file: arxiv-2608.09867.md
+        bridge: "上一页的不可信备注至少可见；本篇把它换成客户端不可读、模型可消费的 reasoning envelope，检查跨会话/用户/模型重放，并把 principal、session、predecessor、model 与 purpose 绑定到协议。"
 
   - name: "Agentic RL：credit、能力边界与系统合同"
     route_type: "主干"

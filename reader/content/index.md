@@ -2,6 +2,11 @@
 
 这不是一份按年份堆叠的论文清单，而是一条面向算法工程师的学习路线：先弄清问题，再看计算流程，最后核对实验与证据边界。
 
+!!! abstract "当前研究：从现成 Instruct checkpoint 出发，后训练还能把能力推多远"
+    只接纳真实 released-Instruct 起点，按成功样本密度、reward 密度、外部 target 新颖度与旧能力覆盖来选择 trajectory SFT、direct RL、知识蒸馏或 replay，并以 Qwen3-Coder Instruct 的 matched 决策实验收口。
+
+    [进入专题精读](papers/instruct-model-effective-post-training.md){ .md-button .md-button--primary }
+
 <div class="reader-cards" markdown>
 
 - :material-map-outline: **先看全局地图**

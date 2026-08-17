@@ -1,7 +1,7 @@
 site_name: LLM 基础论文研究手册
 site_description: 面向工程型算法工程师的 LLM 基础论文、机制谱系与证据目录
-site_dir: site
-docs_dir: docs
+site_dir: !ENV [READER_SITE_DIR, site]
+docs_dir: !ENV [READER_DOCS_DIR, docs]
 use_directory_urls: true
 strict: true
 hooks:
@@ -71,7 +71,7 @@ markdown_extensions:
 extra_css:
   - stylesheets/extra.css?v=20260805-2
   - stylesheets/concept-labs.css?v=20260805-1
-  - stylesheets/knowledge-assistant.css?v=20260806-2
+  - stylesheets/knowledge-assistant.css?v=20260807-1
 
 extra_javascript:
   - javascripts/mathjax.js

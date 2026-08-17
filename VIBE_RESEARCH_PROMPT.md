@@ -24,19 +24,53 @@ RUN_MODE = "research"
 
 # 当前 run 优先回答的问题。问题可以在同一 TASK_ID 下更新，不因此创建新目录。
 RESEARCH_QUESTION = """
-基于现有知识库，系统精读 Agentic Reinforcement Learning 中会改变训练或评测判断的论文、正式技术报告
-和作者官方工件。重点回答：长轨迹 credit assignment 的归因对象是什么；environment、verifier、agent
-harness 与 rollout 系统怎样共同定义训练合同；异步训练怎样保持 token、action、old log-prob、policy
-version 和 MoE route 的 provenance；RL 提高的是已有成功行为的可靠性，还是扩大了给定采样合同下的
-可观测能力边界；学习率、控制 token、serialization、judge 和环境基础设施会怎样制造伪增益或失败。
-最终内容应帮助有工程经验的算法工程师设计训练方案、定位故障、审查评测结论并应对技术面试追问。
+系统调研和精读这样一个问题：一个已经完成 instruction tuning、偏好对齐或其他 post-training 的 Instruct
+模型，还能否通过后续训练稳定提升能力？哪些方法已经得到可信实验支持，哪些只在特定模型、任务或评测设置下
+有效，哪些常见做法会造成灾难性遗忘、对齐退化或只提升狭窄榜单？研究重点是论文证据及其适用边界，而不是为
+某个模型预先编写训练实施方案。
+
+“基于 Qwen3-Coder Instruct 继续训练以提升 coding/agent 能力”是本次调研的现实动机和最后的应用案例，但
+不是文献筛选的唯一范围。应先研究跨模型、跨任务的 Instruct 后训练证据，再判断哪些结论可以迁移到 coding、
+工具使用和 agent 场景。除非某项模型结构或接口会直接改变论文结论，否则不展开 checkpoint、权重模块、训练
+参数或评测 harness 的工程核验清单。
+
+重点回答以下研究问题：
+
+1. 文献中的“继续训练 Instruct 模型”具体包括哪些路线：continued pre-training/domain-adaptive pre-training、
+   继续 SFT、多任务或混合数据 SFT、自训练/拒绝采样、知识蒸馏、偏好优化、基于可验证奖励的强化学习，以及
+   adapter、模型合并或能力增量迁移？这些方法改变能力的机制和训练信号有什么本质区别？
+2. 哪些论文真正以一个已经训练好的 Instruct/Chat 模型为起点，并通过充分对照证明能力进一步提升？必须把这类
+   直接证据，与“从 Base 模型完成第一次 post-training”或只展示领域微调结果的间接证据分开。
+3. 各类方法在哪些目标上呈现相对稳定的收益：通用指令遵循、领域知识、推理、数学、代码、工具使用、长程
+   agent 任务或安全对齐？收益来自新增能力、提高已有能力的可靠性，还是仅仅适应输出格式和特定评测？
+4. 数据质量、难度、覆盖、多样性、合成数据、成功/失败样本、可验证反馈和通用数据 replay，分别怎样影响
+   后训练效果？论文中哪些消融真正支持“数据比算法更重要”或相反的结论？
+5. 继续训练会怎样损害原有能力？灾难性遗忘、alignment tax、过拟合、模式坍缩、reward hacking 和领域能力
+   与通用能力的权衡，分别有哪些被实验证实的缓解方法？
+6. 哪些结论能够跨模型规模、模型家族和任务复现，哪些结论存在反例、后续修正或证据不足？最终应形成一张
+   证据分级图：强证据、条件性证据、仅有间接证据、负结果和仍未解决的问题。
+
+把以下判断只当作待检验假设：高质量且与目标能力贴近的 SFT 数据通常仍能提升 Instruct 模型，但容易变窄或
+遗忘；偏好优化更擅长改变行为分布，不一定注入新知识；带可靠 verifier 的 RL/RLVR 可能提高推理、代码和
+agent 成功率，但其泛化和能力保持取决于任务覆盖；混合训练、replay、蒸馏或较受限的参数更新可能缓解遗忘，
+却也可能限制学习上限。必须主动寻找不支持这些判断的论文和实验。
+
+判断“真正有效”时，重点审计研究设计而非复刻全部工程参数：起点是否确为 Instruct 模型，是否有合理基线与
+消融，提升是否出现在独立或未见测试上，是否排除了数据污染和额外推理预算，是否同时报告原能力回退，以及
+结果是否被后续工作或不同模型复现。证据不足时应明确写成未知，不能从 Base 模型训练论文直接外推。
+
+核心成果必须落盘为独立的多论文专题精读章节 `papers/instruct-model-effective-post-training.md`。章节按研究
+问题和证据关系组织，而不是按论文逐篇罗列摘要；既要讲清关键论文的方法和实验，也要综合它们之间的支持、
+冲突、继承和适用边界。结尾单列 Qwen3-Coder Instruct 的应用分析：依据已读证据说明哪些方向最值得尝试、
+哪些判断仍只是迁移推测，但不把该部分扩写成超参数表、训练脚本或完整工程验收方案。REPORT.md 只保留压缩
+结论、知识地图和进入该精读章节的导航。
 """
 
 # 当前 run 的上限，不是必须耗尽的配额。完成验收后可以提前结束。
 HARD_DEADLINE = "AUTO"          # AUTO 或带时区的 ISO-8601 时间
 RUN_DURATION_DAYS = 1
 USE_PERSISTENT_GOAL = true
-GOAL_TOKEN_BUDGET = 2000000
+GOAL_TOKEN_BUDGET = 200000000
 
 # 跨 run 保留的学习目标。详细解释合同以 docs/learning-profile.md 为准。
 LONG_TERM_LEARNING_GOALS = """
@@ -65,16 +99,20 @@ raw Markdown 阅读：首屏应克制，只保留一个明确的内容入口、�
 
 # 当前研究边界和优先顺序。
 SCOPE_AND_PRIORITIES = """
-1. 优先核对 reward/advantage 的归约单位和作用对象：trajectory、state、step、turn、branch、token 或
-   action span；比较方法前先对齐 state/action/harness、采样预算和 evaluator。
-2. 核对训练系统是否保持算法语义：reset/snapshot、verifier、exact token、old log-prob、policy version、
-   async staleness、partial rollout correction 和 MoE routing replay。
-3. 用 greedy/sampled headroom、PASS@(k,T)、新增/丢失题集合、随机种子和区间区分可靠性提升、有限采样下
-   的边界变化、接口崩溃与能力退化。
-4. 新方向先作为可证伪候选：judge 有效性、staleness-adaptive trust region、环境深度与协同进化、跨任务
-   skill/memory、安全 containment、冻结模型的 harness policy、多 Agent 团队信用、有限人审预算。
-5. Delta Attention、Gated DeltaNet、MoE 路由和负载均衡保留为维护线，仅在解释当前系统接口时更新；
-   不因历史范围存在就继续扩写。
+1. 第一优先级是找到“从 Instruct/Chat checkpoint 出发继续训练”的直接实验论文。始于 Base 模型的 post-training
+   论文可以用于解释方法，但必须标记为间接证据，不能占据主结论。
+2. 按方法与训练信号建立文献版图，至少覆盖 continued pre-training、继续 SFT/数据混合、自训练与蒸馏、
+   preference optimization、RL/RLVR、能力保持与灾难性遗忘；coding/agent 论文作为重要应用分支而非全部范围。
+3. 优先精读原始论文、正式技术报告和作者公开工件。综述用于发现和建立术语地图，博客、榜单和模型卡只能作为
+   补充材料，不能替代论文中的方法、消融和结果。
+4. 论文是否入选主章节由证据价值决定：它是否直接回答研究问题、是否提供强基线和消融、是否检查能力回退、
+   是否有跨模型或后续复现、是否提供反例或修正。不能因为方法流行或分数高就认定有效。
+5. 对每个主要方法分支尽量同时阅读代表性早期工作、较新的强结果以及负结果/质疑/复现；若找不到直接证据，
+   记录检索范围和证据缺口。重要综合判断在存在材料时应由不止一个独立来源支持。
+6. 比较论文时只对齐解释结论所必需的实验条件，如起始模型、数据性质、训练目标、评测任务、推理预算与回归
+   测试；不把研究章节写成权重、超参数、框架配置或上线验收清单。
+7. 最终先给出面向一般 Instruct 模型的证据结论，再用 Qwen3-Coder Instruct 检查这些结论对 coding/agent
+   能力提升的相关性、限制和未知项。除非论文证据足够，不输出看似精确的训练配方。
 """
 
 # 硬边界不可由一般任务配置默默放宽；质量边界高于范围和交付物。
@@ -89,9 +127,14 @@ EXCLUSIONS = """
 # 当前 run 应保存的产物。先按 RUN_MODE 选择分支，不把三个分支累加执行。
 DELIVERABLES = """
 共同产物：TASK.md/TASK_HISTORY.md 保存当前配置与历史，STATUS.md 保存本轮增量、未决项和唯一下一步。
-research：持续整合中文 REPORT.md 和可追溯 SOURCES.md；只为独立重要学习问题建立 papers/*.md。重要精读说明
-旧瓶颈、关键动作、数据/状态/梯度/推理路径、目标函数、实验支持、失败边界、后续修正、工件状态和工程判断，
-关键结论定位到 PDF 物理页、表图、章节或固定 commit。仅在 canonical 内容或阅读顺序确实改变时更新 Reader。
+research：持续整合中文 REPORT.md 和可追溯 SOURCES.md；本任务必须创建或维护独立的多论文专题精读章节
+`papers/instruct-model-effective-post-training.md`。该章节是本轮主要 canonical 产物，围绕研究问题组织概念边界、
+文献版图、论文角色、方法机制、关键实验、相互支持与冲突、负结果、证据强弱和适用边界，不能写成按论文顺序
+排列的摘要合集。对承担核心证据角色的论文进行实质精读；只有某篇论文包含无法在专题内清楚承载的独立推导时，
+才额外建立单篇精读页，并从专题章节链接其角色。关键结论尽量定位到 PDF 页码、表格、图或章节。
+章节结尾给出一般 Instruct 模型的结论和 Qwen3-Coder Instruct 的应用分析，但不要求输出超参数矩阵、训练脚本、
+成本预算或完整工程方案。REPORT.md 只保存专题的 30 秒结论、全局知识地图、主要判断和章节入口，不复制正文。
+专题 canonical 内容或阅读顺序改变时，更新 Reader 导航并把该专题作为一个独立精读入口。
 discovery：在 STATUS.md 保存候选问题、来源身份、准入/否决理由、预期会改变的判断和最小核验动作；可在
 SOURCES.md 登记已核实的来源身份，但不据候选摘要改写 REPORT.md、创建精读页或修改 Reader 必读路线。
 reader-rewrite：只改写 READER_REWRITE_SCOPE 覆盖的既有 canonical 阅读文档及其必要卡片、路径和 UI；事实性
@@ -102,9 +145,13 @@ reader-rewrite：只改写 READER_REWRITE_SCOPE 覆盖的既有 canonical 阅读
 COMPLETION_EVIDENCE = """
 共同：作者主张、来源事实、已检查工件事实、Agent 推断和未知项可以区分；所有实际修改的引用、链接、Reader
 页面和相关测试已验证；未解决问题已进入 STATUS.md，且有范围边界和唯一下一步。
-research：RESEARCH_QUESTION 的每个核心子问题都有答案、直接原始证据和明确未知项；重要争议有反证或合同
-差异说明。方法比较已对齐模型、数据、状态/action、训练信号、采样与交互预算、评测器和统计单位。只读重要
-文档的标题、30 秒结论和 5 分钟流程，就能复述旧方法、瓶颈、动作、收益、代价和边界。
+research：`papers/instruct-model-effective-post-training.md` 已作为独立多论文专题章节落盘并由 REPORT.md 和
+Reader 可达；RESEARCH_QUESTION 的核心问题均有基于论文的回答或明确未知项。主要方法分支均有原始论文或
+正式报告承担明确角色，并清楚区分直接研究 Instruct 二次训练的证据与从 Base post-training 外推的间接证据。
+章节包含代表性强结果，也主动纳入可找到的反例、负结果、复现差异和后续修正；重要综合判断在材料允许时由
+多个独立来源交叉支持。预印本、正式发表、官方自评和独立实验分开标注，方法比较只核对解释结论必要的实验
+条件。章节不是参考文献目录：只看标题、论证地图、论文角色表、30 秒结论和 5 分钟主线，就能复述哪些训练
+方法确实有效、证据有多强、为何有效、会损失什么、在什么条件下失效，以及对 Qwen3-Coder 可以推断到哪一步。
 discovery：候选已按来源身份去重并逐项记录准入/否决理由、可证伪问题、预期判断变化和最小下一步；候选事实
 没有被写成研究结论，也没有自动进入精读页或必读路线。
 reader-rewrite：范围内每篇文档均有逐篇验收记录，而非抽样代替；首读主线能从中心问题走到工程/研究判断，
@@ -113,7 +160,10 @@ reader-rewrite：范围内每篇文档均有逐篇验收记录，而非抽样代
 """
 
 # NONE 或用户指定的起始来源；只影响候选发现，不绕过来源准入与证据核验。
-SEED_SOURCES = "NONE"
+SEED_SOURCES = """
+Qwen3-Coder official launch report（仅作为应用背景）: https://qwenlm.github.io/blog/qwen3-coder/
+Qwen3-Coder-Next Technical Report（仅作为 coding/agent 分支种子）: https://arxiv.org/abs/2603.00729
+"""
 
 REPOSITORY_ROOT = "/Users/4paradigm/Desktop/knowledge_factory/paper_search"
 OUTPUT_LANGUAGE = "zh-CN"
@@ -186,6 +236,8 @@ WORK_UNIT_MINUTES = 10
 三、把工作拆成答案级增量
 
 9. 先清点已有来源、结论和 Reader 接入，按 DOI、arXiv/OpenReview ID、标题版本和仓库 identity 去重。
+   若 `TASK_DIR/artifacts.sqlite3` 存在，使用 `reader/task_store.py list/read` 按原逻辑路径读取已归档来源、handoff
+   和历史 run；不得仅为浏览而恢复整棵散文件目录。普通文件与数据库逻辑文件共同构成已有任务内容。
    STATUS.md 的队列以“学习问题/证据缺口”为单位，不以“再读一篇论文”为单位。每项写清：当前答案、缺口、
    预期改变的判断、将修改的文件、完成证据和唯一下一步。
 10. 只启动能在剩余窗口内闭环的工作单元。开始前确认：
@@ -337,6 +389,9 @@ WORK_UNIT_MINUTES = 10
     “只读反馈/现有证据 -> canonical 文档 -> 必要 Reader 元数据/UI -> 维修账本与 STATUS.md”。STATUS.md 顶部
     只保留当前 run 的关键认识：旧认识/缺口 -> 新证据 -> 更新结论 -> 对用户的用途 -> canonical 落点；命令
     日志和重复校验不算研究产出。
+    收尾且不再修改本轮工件后，运行 `reader/task_store.py compact --task-dir "${TASK_DIR}"`；它只在逐项哈希
+    校验成功后收拢非 PDF 来源、已完成 handoff、非当前 run 和 work 中间件。若确需覆盖数据库中同路径的旧
+    工件，先核对差异，再显式使用 `--replace`，不得以恢复整树作为日常运行方式。
 32. 若运行时 gate 可用，在开始高成本工作单元前检查：
 
     python3 "${REPOSITORY_ROOT}/tools/research_runtime.py" gate "${TASK_ID}"

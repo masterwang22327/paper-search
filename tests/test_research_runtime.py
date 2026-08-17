@@ -187,6 +187,43 @@ class ScaffoldTests(unittest.TestCase):
 
             self.assertTrue(result["valid"], result)
 
+    def test_validate_reads_compacted_historical_runs(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            before = datetime(2026, 7, 17, 12, 0, tzinfo=runtime.TZ)
+            after = datetime(2026, 7, 18, 12, 0, tzinfo=runtime.TZ)
+            args = Namespace(
+                task_id="topic",
+                deadline="2026-07-20T23:00:00+08:00",
+                duration_days=3,
+                goal_token_budget=50_000,
+                quota_stop_usd=1.0,
+                quota_check_minutes=20,
+                work_unit_minutes=10,
+            )
+            with patch.object(runtime, "TASKS_ROOT", root / "tasks"), patch.object(
+                runtime, "now_bjt", return_value=before
+            ):
+                first = runtime.initialize(args)
+                runtime.close_run(Namespace(task_id="topic", reason="STOP_COMPLETE"))
+            args.deadline = "2026-07-22T23:00:00+08:00"
+            with patch.object(runtime, "TASKS_ROOT", root / "tasks"), patch.object(
+                runtime, "now_bjt", return_value=after
+            ):
+                runtime.initialize(args)
+                task = root / "tasks" / "topic"
+                (task / "TASK.md").write_text(
+                    "# Research Task\n\n## Research Question\n\nA materialized question.\n",
+                    encoding="utf-8",
+                )
+                store = runtime.TaskArtifactStore(task)
+                self.assertGreater(store.compact_state_history(), 0)
+                self.assertFalse((task / "state" / "runs" / first["run_id"]).exists())
+                runtime._ARTIFACT_STORES.clear()
+                result = runtime.validate(Namespace(task_id="topic"))
+
+            self.assertTrue(result["valid"], result)
+
     def test_validate_rejects_an_unmaterialized_task(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)

@@ -479,6 +479,18 @@ papers:
     strategy: "先用题 A 的长度 `2/8`、奖励 `1/0` 比较 per-response 与 pooled-token 分母，再处理题 B 的 zero-variance group，并填写 old/current/reference/verifier 时钟。实际使用哪种 trainer，再第二遍回查对应方法。"
     prerequisites: "PPO/DPO、policy gradient、importance sampling、token/sequence reduction"
 
+  instruct-model-effective-post-training.md:
+    level: "后训练证据综合 · 核心专题"
+    effort: "首读 90–120 分钟；按目标选读原文与工件 4–7 小时"
+    background: "Qwen3 30B-A3B Instruct/Coder 已出现继续 SFT、SFT+RL 和明确 full-parameter FT 的证据；但任务接近度、参数披露、系统贡献与公开工件分散在不同论文，不能再由 dense SWE-Gym 单独代替。"
+    problem: "区分‘MoE Instruct 继续训练有效’与‘明确全参数有效’，再按 exact task、matched harness、trainable scope、公开数据/代码/checkpoint 和 expert/router 健康决定证据能支撑哪一步。"
+    legacy: "目前没有工作同时满足 exact Qwen3-Coder MoE、repo issue resolution、明确 full-parameter 和完整训练包；SWE-MeM 最贴任务，MoE specialization 最贴架构，Scale-SWE/Open-SWE-Traces 最有公开材料。"
+    team: "综合 SWE-MeM、Scale-SWE、Open-SWE-Traces、FuseSearch、MoE specialization、WebWeaver，并用 SWE-Gym、ToolRL、Knowledge-Instruct、DiSC 和 retention/replay 研究控制外推边界。"
+    impact: "把 dense-to-MoE 类比改成三条互补证据链，并新增 optimizer scope、expert token/gradient coverage、router entropy/drift、route replay 与 MoE 系统成本审计。"
+    value: "直接服务 Qwen3-Coder MoE 全量训练决策：知道哪些公开数据/权重可先用、哪些论文只证明可行，以及为什么最终仍需 full-parameter vs expert-aware PEFT 的 matched experiment。"
+    strategy: "第一遍只读摘要、§3、§4.2–4.3 和 §8，先完成论文价值/复现矩阵；第二遍分别亲读 SWE-MeM、MoE specialization、Scale-SWE/Open-SWE-Traces 与 WebWeaver/FuseSearch 的固定页和工件边界。"
+    prerequisites: "已读 instruction/CoT、Reward/Verifier、DPO 与 reasoning-RL 基本对象；公式均在本页用最小数据流重新说明"
+
   dpr-dense-retrieval.md:
     level: "检索地基 · 推荐精读"
     effort: "首读 10–15 分钟；第二遍 60–100 分钟"
@@ -718,6 +730,18 @@ papers:
     value: "适合审计 RAG、浏览器、邮件和工具 Agent：先给每段 observation 标 provenance，再让外部 gate 决定是否允许副作用。"
     strategy: "沿 `s42` 与恶意 `s43` 备注走一条轨迹，分开 benign utility、utility under attack、targeted ASR、overblocking 与真实 state diff；第二遍再回查攻击分母。"
     prerequisites: "工具 ABI、权限/身份直觉、混淆矩阵与基础安全威胁模型"
+
+  arxiv-2608.09867.md:
+    level: "API 状态安全 · 必读"
+    effort: "首读 20–30 分钟；完整实验与附录 90–140 分钟"
+    background: "部分无状态 LLM API 会把客户端不可读、服务端模型可消费的 reasoning block 返回给应用保存；opaque、encrypted 和 authorized 是三种不同属性。"
+    problem: "解释缺少 user/session/model/predecessor 上下文绑定时，跨会话、跨用户与跨模型重放怎样把 reasoning envelope 变成推理蒸馏、秘密泄漏和隐藏注入通道。"
+    legacy: "论文没有 proprietary plaintext ground truth；公开轨迹是选择性样本，且作者明确记录披露后原攻击截至 2026 年 8 月已不可复现。"
+    team: "Panfilov 等人以 Anthropic、OpenAI 与 Google 的当时 API 为研究对象；本页绑定 arXiv v1，当前厂商文档只用于核对 opaque-state 接口，不证明漏洞仍存在。"
+    impact: "把‘客户端看不懂的 blob’重新分类为需要身份、会话、模型、前驱、用途与生命周期约束的敏感 bearer state。"
+    value: "适合审计 stateless reasoning API、Agent trace、telemetry 和 continuation token，尤其能避免只扫可见文本、只验签名或只审最终回答。"
+    strategy: "固定 `U -> E -> A` 三对象，先画 replay compatibility matrix，再审 token-count proxy、四类风险与六层防御；不复刻 Appendix C 的操作模板。"
+    prerequisites: "基本 API 会话、AEAD/签名直觉、身份授权、Agent provenance；不要求密码学证明"
 
   mechanistic-interpretability-causal-intervention.md:
     level: "模型内部审计 · 进阶精读"

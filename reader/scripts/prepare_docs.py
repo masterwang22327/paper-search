@@ -8,6 +8,7 @@ import html
 import os
 import re
 import shutil
+import sys
 from pathlib import Path, PurePosixPath
 
 import yaml
@@ -15,6 +16,11 @@ import yaml
 
 READER_DIR = Path(__file__).resolve().parents[1]
 REPO_DIR = READER_DIR.parent
+sys.path.insert(0, str(READER_DIR))
+
+from task_store import ArtifactInfo, TaskArtifactStore
+
+
 DEFAULT_TASK_ID = "paper-research-base-knowledge-about-llm-20260717"
 READING_CARDS_PATH = READER_DIR / "reading-cards.yml"
 LEARNING_PATH_PATH = READER_DIR / "learning-path.yml"
@@ -104,6 +110,7 @@ PAPER_PRIMARY = {
     "arxiv-2312.00752.md": "arxiv-2312.00752v2",
     "arxiv-2403.05530.md": "arxiv-2403.05530v5",
     "arxiv-2412.19437.md": "arxiv-2412.19437v2",
+    "arxiv-2608.09867.md": "arxiv-2608.09867v1",
     "dpr-dense-retrieval.md": "emnlp-2020-dpr",
     "neurips-2022-instructgpt.md": "arxiv-2203.02155v1",
     "neurips-2023-dpo.md": "neurips-2023-dpo",
@@ -637,26 +644,56 @@ def hardlink_or_copy(source: Path, destination: Path) -> None:
         shutil.copy2(source, destination)
 
 
-def source_page(source_dir: Path, destination: Path) -> None:
-    files = sorted(path for path in source_dir.rglob("*") if path.is_file())
-    pdfs = [path for path in files if path.suffix.lower() == ".pdf"]
+def source_page(
+    source_dir: Path,
+    destination: Path,
+    *,
+    include_pdfs: bool = True,
+    artifact_store: TaskArtifactStore | None = None,
+) -> None:
+    physical_files = sorted(path for path in source_dir.rglob("*") if path.is_file())
+    pdfs = [path for path in physical_files if path.suffix.lower() == ".pdf"]
+    if artifact_store is not None:
+        inventory = artifact_store.source_inventory(source_dir.name)
+    else:
+        inventory = [
+            ArtifactInfo(
+                path.relative_to(source_dir).as_posix(),
+                path.stat().st_size,
+                path.stat().st_mtime_ns,
+            )
+            for path in physical_files
+        ]
     lines = [f"# 来源：{source_dir.name}", "", f"原始目录：`{source_dir}`", ""]
     if pdfs:
         lines.extend(["## 原始论文", ""])
         for pdf in pdfs:
             target_name = pdf.name if pdf.parent == source_dir else "-".join(pdf.relative_to(source_dir).parts)
-            hardlink_or_copy(pdf, destination.parent / target_name)
+            if include_pdfs:
+                hardlink_or_copy(pdf, destination.parent / target_name)
+            else:
+                # MkDocs strict mode validates linked files. The temporary
+                # marker is removed before SQLite maps this URL to tasks/.
+                (destination.parent / target_name).touch()
             lines.append(f"- [{pdf.relative_to(source_dir)}]({target_name})")
         lines.append("")
     evidence = source_dir / "evidence.md"
-    if evidence.is_file():
-        lines.extend(["## 证据说明", "", evidence.read_text(encoding="utf-8"), ""])
+    evidence_text = (
+        artifact_store.read_path_text(evidence) if artifact_store is not None
+        else evidence.read_text(encoding="utf-8") if evidence.is_file()
+        else None
+    )
+    if evidence_text is not None:
+        lines.extend(["## 证据说明", "", evidence_text, ""])
     lines.extend(["## 文件清单", "", '<div class="source-inventory">', ""])
-    for path in files:
-        relative = path.relative_to(source_dir)
-        size = path.stat().st_size
-        lines.append(f"- `{html.escape(str(relative))}` · {size:,} bytes")
-    lines.extend(["", "</div>", "", "!!! note", "    除上方 PDF 外，清单中的文件保留在原始任务目录，本站不会执行或改写这些工件。", ""])
+    for item in inventory:
+        lines.append(f"- `{html.escape(item.path)}` · {item.size:,} bytes")
+    storage_note = (
+        "除上方 PDF 外，清单中的文件按原逻辑路径保存在任务级 SQLite；本站不会执行或改写这些工件。"
+        if artifact_store is not None
+        else "除上方 PDF 外，清单中的文件保留在原始任务目录，本站不会执行或改写这些工件。"
+    )
+    lines.extend(["", "</div>", "", "!!! note", f"    {storage_note}", ""])
     destination.write_text("\n".join(lines), encoding="utf-8")
 
 
@@ -680,7 +717,7 @@ def learning_path_markdown(
         ])
         for item in stage["papers"]:
             overall_index += 1
-            target = f'papers/{html.escape(Path(item["file"]).stem, quote=True)}/'
+            target = f'/papers/{html.escape(Path(item["file"]).stem, quote=True)}/'
             level = html.escape(str(item.get("level", "专题精读")))
             effort = html.escape(str(item.get("effort", "")))
             lines.extend([
@@ -757,14 +794,20 @@ def write_summary(
     (docs_dir / "SUMMARY.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def prepare(task_id: str) -> None:
+def prepare(
+    task_id: str,
+    output_dir: Path | None = None,
+    *,
+    virtual_site: bool = False,
+) -> None:
     task_dir = (REPO_DIR / "tasks" / task_id).resolve()
     required = [task_dir / "REPORT.md", task_dir / "SOURCES.md", task_dir / "papers", task_dir / "sources"]
     missing = [str(path) for path in required if not path.exists()]
     if missing:
         raise SystemExit("Missing task inputs:\n" + "\n".join(missing))
+    artifact_store = TaskArtifactStore.open_existing(task_dir)
 
-    docs_dir = READER_DIR / "docs"
+    docs_dir = (output_dir or READER_DIR / "docs").resolve()
     if docs_dir.exists():
         shutil.rmtree(docs_dir)
     shutil.copytree(READER_DIR / "content", docs_dir)
@@ -837,7 +880,12 @@ def prepare(task_id: str) -> None:
     for directory in source_dirs:
         destination = docs_dir / "sources" / directory.name / "index.md"
         destination.parent.mkdir(parents=True, exist_ok=True)
-        source_page(directory, destination)
+        source_page(
+            directory,
+            destination,
+            include_pdfs=not virtual_site,
+            artifact_store=artifact_store,
+        )
         index_lines.append(f"- [{directory.name}]({directory.name}/index.md)")
     (docs_dir / "sources" / "index.md").write_text("\n".join(index_lines) + "\n", encoding="utf-8")
 
@@ -869,7 +917,8 @@ def prepare(task_id: str) -> None:
         f"- canonical 阅读路线：{len(admitted_files)} 篇\n"
         f"- 候选页面（不计入路线）：{len(candidate_items)} 篇\n"
         f"- 来源目录：{len(source_dirs)} 个\n\n"
-        "`reader/docs/` 和 `reader/site/` 均可删除并重新生成；原始任务文件不会被修改。\n",
+        "Reader 的 Markdown 与静态站点只在临时构建目录中存在，完成后写入 SQLite；"
+        "原始任务文件不会被修改。\n",
         encoding="utf-8",
     )
     (docs_dir / "meta" / "citation-audit.md").write_text(
@@ -903,8 +952,10 @@ def prepare(task_id: str) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--task-id", default=DEFAULT_TASK_ID)
+    parser.add_argument("--output-dir", type=Path)
+    parser.add_argument("--virtual-site", action="store_true")
     args = parser.parse_args()
-    prepare(args.task_id)
+    prepare(args.task_id, args.output_dir, virtual_site=args.virtual_site)
 
 
 if __name__ == "__main__":

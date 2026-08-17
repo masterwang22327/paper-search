@@ -48,16 +48,29 @@ def run() -> None:
         raise RuntimeError("Google Chrome or Microsoft Edge is required for the UI test")
 
     subprocess.run([str(READER_DIR / "build.sh"), TASK_ID], cwd=READER_DIR, check=True)
-    concept_images = READER_DIR / "site" / "images" / "modern-transformer-block"
+    site_database = READER_DIR / "user-data" / TASK_ID / "site.sqlite3"
+    sys.path.insert(0, str(READER_DIR))
+    from runtime_store import RuntimeStore
+    from site_store import SiteStore
+
+    site_store = SiteStore(site_database, READER_DIR.parent)
     for filename in (
         "preln-postln-icml2020-fig1.png",
         "gqa-head-sharing-emnlp2023-fig2.png",
         "sliding-window-mistral2023-fig1.png",
     ):
-        assert (concept_images / filename).is_file(), filename
+        assert site_store.entry(f"images/modern-transformer-block/{filename}") is not None, filename
     port = free_port()
     server = subprocess.Popen(
-        [sys.executable, "-m", "http.server", str(port), "--bind", "127.0.0.1", "--directory", "site"],
+        [
+            sys.executable,
+            str(READER_DIR / "site_store.py"),
+            "serve",
+            "--database",
+            str(site_database),
+            "--port",
+            str(port),
+        ],
         cwd=READER_DIR,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -68,14 +81,11 @@ def run() -> None:
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True, executable_path=str(chrome))
             page = browser.new_page(viewport={"width": 1600, "height": 1000})
-            transformer_revisions = json.loads(
-                (
-                    READER_DIR
-                    / "user-data"
-                    / TASK_ID
-                    / "document-revisions"
-                    / "e1a48e1b8a1ee4d8644a.json"
-                ).read_text(encoding="utf-8")
+            runtime_store = RuntimeStore(
+                READER_DIR / "user-data" / TASK_ID / "state.sqlite3"
+            )
+            transformer_revisions = runtime_store.load_json(
+                "document-revisions/e1a48e1b8a1ee4d8644a.json", {}
             ).get("items", [])
             page.add_init_script(
                 """(() => {
@@ -209,7 +219,11 @@ def run() -> None:
                         contexts: request.contexts,
                         pdf_contexts: request.pdf_contexts
                       };
-                      const assistant = {id: "asked-assistant", role: "assistant", content: "模拟回答完成"};
+                      const assistant = {
+                        id: "asked-assistant",
+                        role: "assistant",
+                        content: String.raw`模拟回答完成。因此，这个结果的 policy 学习率就是 \\(1e\\!-\\!4\\)，而不是 LoRA 的 \\(5e\\!-\\!4\\)。`
+                      };
                       return new Promise(resolve => setTimeout(() => {
                         window.__faqTestState.messages.push(user, assistant);
                         const current = window.__faqTestState.threads.find(item => item.id === request.thread_id);
@@ -336,12 +350,70 @@ def run() -> None:
                 )
             )
 
+            page.goto(f"{base_url}/", wait_until="networkidle")
+            current_topic = page.get_by_role(
+                "link", name="进入专题精读", exact=True
+            )
+            expect(current_topic).to_be_visible()
+            expect(page.locator("body")).to_contain_text(
+                "从现成 Instruct checkpoint 出发，后训练还能把能力推多远"
+            )
+            current_topic.click()
+            page.wait_for_url(f"{base_url}/papers/instruct-model-effective-post-training/")
+            expect(page.locator("h1")).to_contain_text(
+                "从现成 Instruct checkpoint 出发，后训练还能把能力推多远"
+            )
+
             page.goto(f"{base_url}/reading-guide/", wait_until="networkidle")
             expect(page.locator(".learning-stage")).to_have_count(14)
             expect(page.locator(".learning-stage").first).to_contain_text("进入前")
             expect(page.locator(".learning-stage").first).to_contain_text("读完后")
             expect(page.locator(".learning-stage").first).to_contain_text("阶段检查")
-            expect(page.locator(".learning-stage__papers > li")).to_have_count(64)
+            expect(page.locator(".learning-stage__papers > li")).to_have_count(66)
+            post_training_link = page.get_by_role(
+                "link",
+                name=re.compile(r"^从现成 Instruct checkpoint 出发，后训练还能把能力推多远"),
+            )
+            expect(post_training_link).to_be_visible()
+            post_training_link.click()
+            page.wait_for_url(f"{base_url}/papers/instruct-model-effective-post-training/")
+            expect(page.locator("h1")).to_contain_text(
+                "从现成 Instruct checkpoint 出发，后训练还能把能力推多远"
+            )
+
+            page.goto(f"{base_url}/papers/arxiv-2608.09867/", wait_until="networkidle")
+            expect(page.locator("h1")).to_contain_text("加密推理块不是保险箱")
+            expect(page.locator(".paper-reading-card__route")).to_contain_text("本阶段 4/4")
+            expect(page.locator(".paper-reading-card__route")).to_contain_text("全路线 37/66")
+            expect(page.locator(".evidence-link")).to_have_count(14)
+            first_reasoning_source = page.locator(".evidence-link").first
+            expect(first_reasoning_source).to_have_attribute("data-primary", "true")
+            expect(first_reasoning_source).to_have_attribute(
+                "href", re.compile(r"/sources/arxiv-2608\.09867v1/paper\.pdf#page=1$")
+            )
+            expect(page.locator(".paper-reading-card__route nav a")).to_have_count(2)
+
+            page.set_viewport_size({"width": 390, "height": 844})
+            page.reload(wait_until="networkidle")
+            reasoning_mobile_layout = page.evaluate(
+                """() => ({
+                  viewportWidth: document.documentElement.clientWidth,
+                  pageWidth: document.documentElement.scrollWidth,
+                  tables: Array.from(document.querySelectorAll('.md-typeset table')).map(table => {
+                    const wrapper = table.closest('.md-typeset__scrollwrap');
+                    return {
+                      tableWidth: table.scrollWidth,
+                      wrapperWidth: wrapper ? wrapper.clientWidth : table.parentElement.clientWidth
+                    };
+                  })
+                })"""
+            )
+            assert reasoning_mobile_layout["pageWidth"] <= reasoning_mobile_layout["viewportWidth"] + 1
+            assert all(
+                item["wrapperWidth"] <= reasoning_mobile_layout["viewportWidth"]
+                for item in reasoning_mobile_layout["tables"]
+            ), reasoning_mobile_layout
+            page.set_viewport_size({"width": 1600, "height": 1000})
 
             page.set_viewport_size({"width": 390, "height": 844})
             page.goto(f"{base_url}/papers/tokenization-data-curation/", wait_until="networkidle")
@@ -630,7 +702,7 @@ def run() -> None:
             expect(page.locator(".reader-section-tools__current small")).to_have_text(re.compile(r"1 / \d+"))
             expect(page.locator(".paper-reading-card__details")).to_be_visible()
             expect(page.locator(".paper-reading-card__route")).to_contain_text("本阶段 5/7")
-            expect(page.locator(".paper-reading-card__route")).to_contain_text("全路线 5/64")
+            expect(page.locator(".paper-reading-card__route")).to_contain_text("全路线 5/66")
             expect(page.locator(".paper-reading-card__route")).to_contain_text("从上一篇到本篇")
             expect(page.locator(".paper-reading-card__route nav a")).to_have_count(2)
             expect(page.locator(".reading-route-footer")).to_be_visible()
@@ -909,11 +981,32 @@ def run() -> None:
             expect(page.locator(".knowledge-session")).to_have_text("11111111")
             expect(page.locator(".knowledge-context")).to_have_count(0)
             assistant = page.locator(".knowledge-message--assistant", has_text="模拟回答完成")
+            inline_math = assistant.locator(".knowledge-math-inline").first
+            expect(inline_math).to_have_text("1e−4")
+            inline_math_layout = inline_math.evaluate(
+                """element => {
+                  const rect = element.getBoundingClientRect();
+                  const style = getComputedStyle(element);
+                  return {
+                    height: rect.height,
+                    lineHeight: parseFloat(getComputedStyle(element.parentElement).lineHeight),
+                    overflowWrap: style.overflowWrap,
+                    whiteSpace: style.whiteSpace,
+                    wordBreak: style.wordBreak
+                  };
+                }"""
+            )
+            assert inline_math_layout["height"] <= inline_math_layout["lineHeight"] * 1.5, inline_math_layout
+            assert inline_math_layout["overflowWrap"] == "normal", inline_math_layout
+            assert inline_math_layout["whiteSpace"] == "nowrap", inline_math_layout
+            assert inline_math_layout["wordBreak"] == "normal", inline_math_layout
             assistant.get_by_role("button", name="保存为 FAQ").click()
             editor = page.locator(".knowledge-faq-editor__dialog")
             expect(editor).to_be_visible()
             expect(editor.locator('[name="question"]')).to_have_value("解释第七页图表")
-            expect(editor.locator('[name="answer"]')).to_have_value("模拟回答完成")
+            expect(editor.locator('[name="answer"]')).to_have_value(
+                "模拟回答完成。因此，这个结果的 policy 学习率就是 \\(1e\\!-\\!4\\)，而不是 LoRA 的 \\(5e\\!-\\!4\\)。"
+            )
             editor.locator('[name="question"]').fill("第七页图表说明了什么？")
             editor.locator('[name="note"]').fill("复习生成阶段的数据依赖。")
             editor.get_by_role("button", name="保存", exact=True).click()

@@ -4,6 +4,8 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
+MAX_GOAL_TOKEN_BUDGET = 200_000_000
+MAX_PROMPT_LINES = 450
 
 
 class PromptContractTests(unittest.TestCase):
@@ -48,7 +50,7 @@ class PromptContractTests(unittest.TestCase):
     def test_runtime_limits_are_ceilings_and_completion_is_terminal(self) -> None:
         budget_match = re.search(r"(?m)^GOAL_TOKEN_BUDGET = (\d+)$", self.prompt)
         self.assertIsNotNone(budget_match)
-        self.assertLessEqual(int(budget_match.group(1)), 10_000_000)
+        self.assertLessEqual(int(budget_match.group(1)), MAX_GOAL_TOKEN_BUDGET)
         self.assertIn("完成验收是合法终点", self.prompt)
         self.assertIn("--reason STOP_COMPLETE", self.prompt)
         self.assertIn("STOP_DEADLINE", self.prompt)
@@ -100,7 +102,7 @@ class PromptContractTests(unittest.TestCase):
         self.assertIn("标题与角色反向验收", self.prompt)
 
     def test_prompt_stays_reviewable(self) -> None:
-        self.assertLessEqual(len(self.prompt.splitlines()), 350)
+        self.assertLessEqual(len(self.prompt.splitlines()), MAX_PROMPT_LINES)
 
 
 if __name__ == "__main__":

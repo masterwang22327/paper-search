@@ -46,8 +46,8 @@ def run() -> None:
         titles,
         admitted_files=admitted,
     )
-    assert len(production_papers) == 67
-    assert len(admitted) == len(route) == len(explicit_cards) == 64
+    assert len(production_papers) == 69
+    assert len(admitted) == len(route) == len(explicit_cards) == 66
     assert len(cards) == len(production_papers)
     assert set(candidates) == {
         "agentic-rl-next-directions.md",
@@ -56,7 +56,7 @@ def run() -> None:
     }
     assert "evaluator-judge-validity-cua.md" in admitted
     assert "async-staleness-rolloutpipe.md" in admitted
-    assert sum(len(stage["papers"]) for stage in stages) == 64
+    assert sum(len(stage["papers"]) for stage in stages) == 66
     positions = {filename: context["overall_index"] for filename, context in route.items()}
     assert positions["pretransformer-gpt-lineage.md"] < positions["contextual-representations-finetuning.md"]
     assert positions["tokenization-data-curation.md"] < positions["arxiv-1810.04805.md"]
@@ -65,8 +65,12 @@ def run() -> None:
     assert positions["reasoning-rl-reductions.md"] < positions["multimodal-llm-vision-language-abi.md"]
     assert positions["instruction-cot-self-consistency.md"] < positions["reward-verifier-policy-learning.md"]
     assert positions["reward-verifier-policy-learning.md"] < positions["preference-reward-overoptimization.md"]
+    assert positions["reasoning-rl-reductions.md"] < positions["instruct-model-effective-post-training.md"]
+    assert positions["instruct-model-effective-post-training.md"] < positions["multimodal-llm-vision-language-abi.md"]
     assert positions["multimodal-llm-vision-language-abi.md"] < positions["tool-use-function-calling-abi.md"]
     assert positions["tool-use-function-calling-abi.md"] < positions["agent-runtime-prompt-injection-security.md"]
+    assert positions["agent-runtime-prompt-injection-security.md"] < positions["arxiv-2608.09867.md"]
+    assert positions["arxiv-2608.09867.md"] < positions["agentic-rl-credit-assignment.md"]
     assert positions["scalable-oversight-control-evaluation.md"] < positions["mechanistic-interpretability-causal-intervention.md"]
     assert positions["code-embedding-retrieval.md"] < positions["code-generation-software-engineering-agents.md"]
     assert route["decoding.md"]["next"]["file"] == "tokenization-data-curation.md"
@@ -76,6 +80,9 @@ def run() -> None:
     assert guide_route.count('<section class="learning-stage"') == 14
     assert "主干 · 阶段" in guide_route and "选读分支 · 阶段" in guide_route
     assert "进入前" in guide_route and "读完后" in guide_route and "阶段检查" in guide_route
+    assert 'href="/papers/instruct-model-effective-post-training/"' in guide_route
+    assert 'href="/papers/arxiv-2608.09867/"' in guide_route
+    assert 'href="papers/' not in guide_route
 
     with tempfile.TemporaryDirectory() as temporary:
         task = Path(temporary)
@@ -83,6 +90,28 @@ def run() -> None:
             directory = task / "sources" / source
             directory.mkdir(parents=True)
             (directory / "paper.pdf").write_bytes(b"%PDF-test")
+
+        source_directory = task / "sources" / "arxiv-1706.03762v7"
+        (source_directory / "evidence.md").write_text(
+            "# Transformer Evidence\n", encoding="utf-8"
+        )
+        (source_directory / "arxiv-api.xml").write_text(
+            "<feed><title>Transformer</title></feed>\n", encoding="utf-8"
+        )
+        artifact_store = prepare_docs.TaskArtifactStore(task)
+        assert artifact_store.compact_sources() == 2
+        source_page_path = task / "generated" / "index.md"
+        source_page_path.parent.mkdir()
+        prepare_docs.source_page(
+            source_directory,
+            source_page_path,
+            include_pdfs=False,
+            artifact_store=artifact_store,
+        )
+        source_page = source_page_path.read_text(encoding="utf-8")
+        assert "Transformer Evidence" in source_page
+        assert "`arxiv-api.xml`" in source_page
+        assert "任务级 SQLite" in source_page
 
         papers = task / "papers"
         papers.mkdir()

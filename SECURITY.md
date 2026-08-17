@@ -17,8 +17,6 @@ The following paths can contain private research material or user activity and m
 
 - `tasks/`
 - `reader/user-data/`
-- `reader/docs/`
-- `reader/site/`
 - `reader/.venv/`
 
 The personalized learning profile in `docs/learning-profile.md` is intentionally public. Review any

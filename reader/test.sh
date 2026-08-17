@@ -9,6 +9,8 @@ if [ ! -x "$READER_DIR/.venv/bin/playwright" ]; then
 fi
 
 cd "$READER_DIR"
+"$READER_DIR/build.sh" paper-research-base-knowledge-about-llm-20260717
+"$READER_DIR/.venv/bin/python" "$READER_DIR/tests/test_storage.py"
 "$READER_DIR/.venv/bin/python" "$READER_DIR/tests/test_prepare_docs.py"
 "$READER_DIR/.venv/bin/python" "$READER_DIR/tests/test_knowledge_api.py"
 exec "$READER_DIR/.venv/bin/python" "$READER_DIR/tests/test_reader.py"

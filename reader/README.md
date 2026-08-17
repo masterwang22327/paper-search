@@ -13,7 +13,7 @@ cd /path/to/paper_search/reader
 
 专题精读在桌面宽屏下会自动显示右侧固定论文 PDF。点击正文中带 `PDF` 标记的页码引用，右侧面板会切换到对应论文和物理页；按住 Command/Ctrl 点击则保留普通链接行为，在新标签页打开。
 
-PDF 阅读器顶部只保留“译文”开关；打开右侧译文栏后，可分别翻译本页、后台补齐全文和查看全文缓存状态。全文翻译只处理未缓存页面，全部缓存后按钮会变为“全文已缓存”并停止重复启动任务。“重新翻译”允许选择 `gpt-5.6-terra` 或 `gpt-5.6-sol`，以及 `medium/high/xhigh/max/ultra` 推理强度，选择保存在当前浏览器。翻译按物理页直接调用无状态 Responses API，不创建或续接 Codex Session；跨页一致性由本地 glossary 和相邻页摘录提供。译文块使用“正文第 1 段”等自然标签，点击块会回查对应 PDF 页，将匹配区域置于 PDF 视口中央；放大后可按住 PDF 内容拖拽平移视图。知识问答运行时不会持有 PDF/翻译共用的长时锁；PDF 标签隐藏后暂停状态轮询，恢复时保持原页码并重新检查当前页缓存。缓存位于 `user-data/<TASK_ID>/translations/`。左侧项目栏可通过页面左上方的 `‹/›` 按钮收起或展开，状态会在浏览器本地保存。
+PDF 阅读器顶部只保留“译文”开关；打开右侧译文栏后，可分别翻译本页、后台补齐全文和查看全文缓存状态。全文翻译只处理未缓存页面，全部缓存后按钮会变为“全文已缓存”并停止重复启动任务。“重新翻译”允许选择 `gpt-5.6-terra` 或 `gpt-5.6-sol`，以及 `medium/high/xhigh/max/ultra` 推理强度，选择保存在当前浏览器。翻译按物理页直接调用无状态 Responses API，不创建或续接 Codex Session；跨页一致性由本地 glossary 和相邻页摘录提供。译文块使用“正文第 1 段”等自然标签，点击块会回查对应 PDF 页，将匹配区域置于 PDF 视口中央；放大后可按住 PDF 内容拖拽平移视图。知识问答运行时不会持有 PDF/翻译共用的长时锁；PDF 标签隐藏后暂停状态轮询，恢复时保持原页码并重新检查当前页缓存。缓存位于 `user-data/<TASK_ID>/translations.sqlite3`（需要兼容旧工具时可用 `restore.sh` 恢复为目录）。左侧项目栏可通过页面左上方的 `‹/›` 按钮收起或展开，状态会在浏览器本地保存。
 
 右侧使用固定在 `reader/content/vendor/` 的本地 PDF.js，不依赖浏览器内置 PDF Viewer。MathJax 与字体同样已本地化，阅读时不会向 CDN 请求资源。
 
@@ -27,30 +27,28 @@ PDF 阅读器顶部只保留“译文”开关；打开右侧译文栏后，可�
 - 在正文的一个段落内选择文字，会出现“加入知识问答上下文”；后端使用块 ID、字符偏移和构建哈希重新验证选区。
 - “加入当前 PDF 页图像”只发送来源 ID 与物理页；后端从固定 PDF 渲染完整 PNG，通过 Codex CLI 的 `--image` 加入当前会话，不信任前端文件路径或标题。
 - 每轮视觉问答会附带精读文档标题/路径/哈希，以及论文标题、作者、官方记录、固定来源 ID、PDF 哈希和页码信息；这些元数据均从只读任务目录生成。
-- 页面图像只存在于 `user-data/` 下的一次性临时目录，Codex 返回或调用失败后都会自动删除。
+- 页面图像只存在于系统临时目录，Codex 返回或调用失败后都会自动删除，不进入仓库或运行时数据库。
 - PDF 页面附件每次发送后即从输入区消耗；历史消息使用本地 PDF.js 按固定来源和物理页重新绘制缩略图，不会在下一轮自动重复发送。
 - 每条助手回答可由用户主动保存为 FAQ；保存前可编辑标题、核心结论和个人备注，固化后在当前文档末尾的“我的个人备忘录”中默认折叠显示。个人 FAQ 由运行时加载，不再拼进生成后的 Markdown 或正文目录；系统也不会自动从整段对话发现候选。
 - 已固化 FAQ 可以逐条删除；JSON、Markdown、页面内容和删除审计会同步更新。
 
-个人数据位于：
+个人数据持久化后只有三个文件：
 
 ```text
 user-data/<TASK_ID>/
-├── sessions.json          # 文档 -> 多个对话线程与当前活动线程
-├── chats/*.jsonl          # 旧版首个对话，兼容保留
-├── chats/<DOC_KEY>/*.jsonl # 后续独立对话的聊天记录
-├── faq/*.json             # FAQ 结构化数据
-├── faq/*.md               # 可读备份
-├── faq-history.jsonl      # 固化审计记录
-└── translations/<SOURCE_ID>/
-    ├── manifest.json      # 无状态翻译后端、模型与固定 PDF 版本
-    ├── glossary.json      # 跨页术语表
-    ├── source-map.json    # 按 PDF 版本固定的页/块/置信度映射
-    ├── pages/*.json       # 逐物理页原文、译文与核对提示
-    └── history.jsonl      # 翻译/重译审计记录
+├── state.sqlite3         # 会话、聊天、FAQ、修订、设置、队列、审计及迁移的旧运行文件
+├── translations.sqlite3  # manifest、术语、source-map、逐页译文与翻译审计记录
+└── site.sqlite3          # HTML、JavaScript、样式、字体、图片及 canonical PDF 映射
 ```
 
-`user-data/` 已被 Git 忽略，也不会进入生成站点。原始 `tasks/` 文件始终只读。
+SQLite 中仍以原相对路径作为主键保存每个工件的完整字节、权限、时间与 SHA-256。旧版聊天、FAQ、
+修订、设置、日志与队列文件，以及 `translations/<SOURCE_ID>/...`，首次运行时都会先逐项导入并校验，
+确认一致后才移除散文件。服务运行中直接读写数据库，不会重新生成这些 JSON、JSONL 或 Markdown；
+`restore.sh` 可完整恢复兼容目录结构。
+
+`user-data/` 已被 Git 忽略，也不会进入生成站点。Reader 的 `serve.sh` 和 `build.sh` 始终只读任务内容。
+任务中的 canonical PDF 和论文 Markdown 保持普通文件；非 PDF 来源工件、已完成 handoff、历史 run 和 work
+中间件可保存在 `tasks/<TASK_ID>/artifacts.sqlite3`。Reader 会按原逻辑路径直接查询该数据库。
 
 翻译默认使用 `https://www.sevnx.one/v1/responses`、`gpt-5.6-terra` 和 `medium` reasoning effort。
 重新翻译会忽略缓存，默认使用 `gpt-5.6-sol` 和 `high`；也可在译文栏切换到允许的模型与推理强度。翻译采用文本层确定覆盖范围、页面图像校准
@@ -75,17 +73,44 @@ export READER_TRANSLATION_API_KEY
 
 ```bash
 ./build.sh <task-id>
-open site/index.html
+```
+
+`build.sh` 在系统临时目录生成 Markdown 和 MkDocs 输出，逐项校验后写入
+`user-data/<TASK_ID>/site.sqlite3`，随后自动清理临时目录。Reader 运行时直接从 SQLite 返回 HTML、
+JavaScript、样式、字体和图片；PDF URL 则映射到 `tasks/` 中的 canonical 文件并支持 HTTP Range，
+不产生 PDF 副本。项目内不会生成常驻 `docs/` 或 `site/` 目录。
+
+`serve.sh` 会先比较任务内容、来源工件库、PDF 和 Reader 源码的输入指纹，并执行 SQLite 快速完整性检查。
+指纹未变化时直接复用现有 `site.sqlite3`，启动过程也不会再生成临时 MkDocs 文件树；只有首次启动、输入变化
+或数据库损坏时才重建。`build.sh` 始终用于显式强制重建。
+
+需要显式收拢任务工件/重建运行时数据库，或恢复兼容目录时运行：
+
+```bash
+./compact.sh <task-id>
+./restore.sh <task-id>
+```
+
+`compact.sh` 是显式维护操作：逐项导入并校验后，把非 PDF 来源文件、已完成 handoff、非当前 run 和 work
+中间件收拢到任务级 `artifacts.sqlite3`，但不移动 canonical PDF、论文 Markdown 或当前 run 热状态。
+`restore.sh` 会恢复原目录结构，只用于兼容或人工恢复，不是 Reader 启动前置步骤。
+
+不展开文件树也可查看任意已归档工件：
+
+```bash
+python3 task_store.py list --task-dir ../tasks/<task-id> --key sources/<stable-id>
+python3 task_store.py read --task-dir ../tasks/<task-id> --key sources/<stable-id>/evidence.md
 ```
 
 `serve.sh` 和 `build.sh` 都要求显式提供 task ID，避免公开仓库意外绑定某个本机任务。
 
 ## 数据边界
 
-- `../tasks/` 是唯一事实来源，脚本只读取它。
-- `docs/` 是每次运行重新生成的阅读副本。
-- `site/` 是 MkDocs 静态构建结果。
-- PDF 优先以硬链接加入 `docs/`，失败时才复制；删除生成目录不会删除原始 PDF。
+- `../tasks/` 是唯一事实来源；Reader 直接读取 canonical 文件和 `artifacts.sqlite3` 中的逻辑文件。
+- Markdown 与 MkDocs 输出只在首次或输入变化后的重建中短暂存在于系统临时目录；正常启动直接复用数据库。
+- 站点数据库保存逻辑路径、压缩内容、MIME、大小、时间与 SHA-256；canonical PDF 只保存路径和哈希。
+- 服务运行前、运行中和运行后都直接使用 SQLite，不会展开站点或个人数据文件树。
+- 任务工件数据库保存原相对路径、完整字节、权限、时间与 SHA-256；当前 run 仍由普通热状态文件维护。
 - 来源代码、模型、数据与中间运行文件不会执行。
 
 ## 回归测试
