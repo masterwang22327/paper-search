@@ -8,6 +8,7 @@
   let externalLink;
   let activeLink;
   let pendingLink;
+  let toggle;
   const widthStorageKey = "research-reader-evidence-width-v2";
   const defaultWidth = "min(44vw, 46rem)";
 
@@ -73,8 +74,44 @@
     resizer.addEventListener("pointercancel", finish);
   }
 
+  function ensureToolDock() {
+    const sidebar = document.querySelector(".md-sidebar--secondary");
+    if (!sidebar) return null;
+    let dock = sidebar.querySelector(":scope > .reader-tool-dock");
+    if (!dock) {
+      dock = document.createElement("div");
+      dock.className = "reader-tool-dock";
+      dock.setAttribute("aria-label", "阅读工具");
+      sidebar.classList.add("reader-tools-docked");
+      const scrollwrap = sidebar.querySelector(":scope > .md-sidebar__scrollwrap");
+      sidebar.insertBefore(dock, scrollwrap || sidebar.firstChild);
+    }
+    return dock;
+  }
+
+  function placeToggle() {
+    if (!toggle) return;
+    const topline = document.querySelector(".paper-reading-card__topline");
+    const hasEvidenceLayout = Boolean(topline || document.querySelector("a.evidence-link[data-pdf]"));
+    const dock = hasEvidenceLayout ? ensureToolDock() : null;
+    if (dock) dock.appendChild(toggle);
+    else document.body.appendChild(toggle);
+    window.dispatchEvent(new CustomEvent("reader:tool-dock-change", {
+      detail: { dock }
+    }));
+  }
+
+  function handleToggleResize() {
+    placeToggle();
+    const saved = Number(localStorage.getItem(widthStorageKey));
+    if (Number.isFinite(saved) && saved > 0) applyPanelWidth(saved, false);
+  }
+
   function buildPanel() {
-    if (panel) return;
+    if (panel) {
+      placeToggle();
+      return;
+    }
     panel = document.createElement("aside");
     panel.className = "evidence-panel";
     panel.setAttribute("aria-label", "论文 PDF 证据面板");
@@ -110,7 +147,7 @@
     resizer.addEventListener("dblclick", resetPanelWidth);
     restorePanelWidth();
 
-    const toggle = document.createElement("button");
+    toggle = document.createElement("button");
     toggle.className = "evidence-panel-toggle";
     toggle.type = "button";
     toggle.innerHTML = '<span>论文 PDF</span><small>打开证据模式</small>';
@@ -118,17 +155,8 @@
       if (pendingLink) showEvidence(pendingLink, true);
       else setPanelOpen(true);
     });
-    function placeToggle() {
-      const topline = document.querySelector(".paper-reading-card__topline");
-      if (window.matchMedia("(max-width: 50rem)").matches && topline) topline.appendChild(toggle);
-      else document.body.appendChild(toggle);
-    }
     placeToggle();
-    window.addEventListener("resize", function () {
-      placeToggle();
-      const saved = Number(localStorage.getItem(widthStorageKey));
-      if (Number.isFinite(saved) && saved > 0) applyPanelWidth(saved, false);
-    });
+    window.addEventListener("resize", handleToggleResize);
     window.dispatchEvent(new CustomEvent("reader:evidence-panel-ready", { detail: { panel } }));
   }
 
@@ -202,6 +230,7 @@
 
   function initializePage() {
     buildPanel();
+    placeToggle();
     document.body.classList.remove("evidence-panel-available", "evidence-panel-open");
     const links = Array.from(document.querySelectorAll("a.evidence-link[data-pdf][data-page]"));
     if (!links.length) return;

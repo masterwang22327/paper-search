@@ -54,6 +54,11 @@ def run() -> None:
     from site_store import SiteStore
 
     site_store = SiteStore(site_database, READER_DIR.parent)
+    paper_routes = sorted(
+        path.stem
+        for path in (READER_DIR.parent / "tasks" / TASK_ID / "papers").glob("*.md")
+    )
+    assert len(paper_routes) == 70, paper_routes
     for filename in (
         "preln-postln-icml2020-fig1.png",
         "gqa-head-sharing-emnlp2023-fig2.png",
@@ -109,7 +114,15 @@ def run() -> None:
                     }, {
                       id: "history-assistant",
                       role: "assistant",
-                      content: "# 历史回答\\n\\n" + Array.from(
+                      content: String.raw`# 历史回答
+
+行内公式 \\(E\\in\\mathbb{R}^{V\\times d}\\)。
+
+\\[
+\\text{logits}=hE^\\top
+\\]
+
+` + Array.from(
                         {length: 80},
                         (_, index) => `第 ${index + 1} 节用于模拟真实的长篇模型回复，确保切换标签后直接显示回答开头。`
                       ).join("\\n\\n")
@@ -128,11 +141,12 @@ def run() -> None:
                   };
                   window.__knowledgeAskRequests = [];
                   window.__knowledgeSettingsRequests = [];
+                  window.__knowledgeStateRequests = 0;
                   window.__translationTestState = {};
                   window.__translationPostCalls = [];
                   window.__translationFullStartCalls = [];
                   window.__translationFullState = {
-                    status: "idle", completed: 0, total: 15, current_pages: [], concurrency: 8, failures: 0
+                    status: "idle", completed: 0, total: 15, current_pages: [], concurrency: 16, failures: 0
                   };
                   window.__translationFullMetrics = {count: 0, active: 0, maxActive: 0, delay: 0};
                   const json = value => Promise.resolve(new Response(JSON.stringify(value), {
@@ -144,7 +158,10 @@ def run() -> None:
                     if (url === "/api/bootstrap") {
                       return json({token: "test-token", task_id: "test-task"});
                     }
-                    if (url.startsWith("/api/state?")) return json(window.__faqTestState);
+                    if (url.startsWith("/api/state?")) {
+                      window.__knowledgeStateRequests += 1;
+                      return json(window.__faqTestState);
+                    }
                     if (url === "/api/chat/archive") {
                       window.__faqTestState.active_thread_id = null;
                       window.__faqTestState.session.status = "archived";
@@ -255,8 +272,8 @@ def run() -> None:
                       window.__translationFullStartCalls.push(JSON.parse(init.body));
                       const completed = Object.keys(window.__translationTestState).length;
                       window.__translationFullState = completed >= 15
-                        ? {status: "completed", completed: 15, total: 15, current_pages: [], concurrency: 8, failures: 0}
-                        : {status: "running", completed, total: 15, current_pages: [3], concurrency: 8, failures: 0};
+                        ? {status: "completed", completed: 15, total: 15, current_pages: [], concurrency: 16, failures: 0}
+                        : {status: "running", completed, total: 15, current_pages: [3], concurrency: 16, failures: 0};
                       return json(window.__translationFullState);
                     }
                     if (url === "/api/translation/full/stop") {
@@ -324,7 +341,10 @@ def run() -> None:
                               figure_data: {
                                 kind: "diagram",
                                 summary: "输入经过编码器与解码器后生成输出。",
-                                labels: [{original: "Inputs", translation: "输入"}],
+                                labels: [{
+                                  original: "first token attention score: 0.01 (baseline, layer 21)",
+                                  translation: "首个词元注意力分数：0.01（基线模型，第 21 层）"
+                                }, {original: "Inputs", translation: "输入"}],
                                 flow_steps: ["输入进入编码器。", "解码器生成输出。"],
                                 notes: []
                               }
@@ -369,7 +389,81 @@ def run() -> None:
             expect(page.locator(".learning-stage").first).to_contain_text("进入前")
             expect(page.locator(".learning-stage").first).to_contain_text("读完后")
             expect(page.locator(".learning-stage").first).to_contain_text("阶段检查")
-            expect(page.locator(".learning-stage__papers > li")).to_have_count(66)
+            expect(page.locator(".learning-stage__papers > li")).to_have_count(67)
+
+            # The Reader is a desktop-only application. Every generated paper
+            # uses the same explicit disclosure control, whose fixed box must
+            # remain separate from the label at the supported desktop width.
+            for paper_route in paper_routes:
+                page.goto(f"{base_url}/papers/{paper_route}/", wait_until="domcontentloaded")
+                assert page.locator('meta[name="viewport"]').count() == 0, paper_route
+                summary = page.locator(".paper-reading-card__details > summary")
+                expect(summary).to_be_visible()
+                expect(summary.locator(".paper-reading-card__details-icon")).to_have_count(1)
+                disclosure_layout = summary.evaluate(
+                    """element => {
+                      const icon = element.querySelector('.paper-reading-card__details-icon');
+                      const label = icon.nextElementSibling;
+                      const iconRect = icon.getBoundingClientRect();
+                      const labelRect = label.getBoundingClientRect();
+                      return {
+                        summaryPseudoDisplay: getComputedStyle(element, '::before').display,
+                        iconMask: getComputedStyle(icon, '::before').maskImage,
+                        iconWidth: iconRect.width,
+                        iconHeight: iconRect.height,
+                        iconRight: iconRect.right,
+                        labelLeft: labelRect.left,
+                        label: label.textContent.trim()
+                      };
+                    }"""
+                )
+                assert disclosure_layout["label"] == "查看完整导读", disclosure_layout
+                assert disclosure_layout["summaryPseudoDisplay"] == "none", disclosure_layout
+                assert disclosure_layout["iconMask"] != "none", disclosure_layout
+                assert disclosure_layout["iconWidth"] >= 16, disclosure_layout
+                assert disclosure_layout["iconHeight"] >= 16, disclosure_layout
+                assert disclosure_layout["iconRight"] < disclosure_layout["labelLeft"], disclosure_layout
+
+                callout_layouts = page.locator(
+                    ".admonition > .admonition-title, "
+                    "details.note > summary, details.abstract > summary, "
+                    "details.info > summary, details.tip > summary, "
+                    "details.success > summary, details.question > summary, "
+                    "details.warning > summary, details.failure > summary, "
+                    "details.danger > summary, details.bug > summary, "
+                    "details.example > summary, details.quote > summary"
+                ).evaluate_all(
+                    """titles => titles.map(title => {
+                      const before = getComputedStyle(title, '::before');
+                      const titleBox = title.getBoundingClientRect();
+                      const range = document.createRange();
+                      range.selectNodeContents(title);
+                      const textBox = range.getBoundingClientRect();
+                      return {
+                        text: title.textContent.trim(),
+                        beforeDisplay: before.display,
+                        beforeMask: before.maskImage,
+                        beforeRight: titleBox.left + Number.parseFloat(before.left) +
+                          Number.parseFloat(before.width),
+                        textLeft: textBox.left
+                      };
+                    })"""
+                )
+                for callout_layout in callout_layouts:
+                    assert callout_layout["beforeDisplay"] != "none", (
+                        paper_route,
+                        callout_layout,
+                    )
+                    assert callout_layout["beforeMask"] != "none", (
+                        paper_route,
+                        callout_layout,
+                    )
+                    assert callout_layout["beforeRight"] < callout_layout["textLeft"], (
+                        paper_route,
+                        callout_layout,
+                    )
+
+            page.goto(f"{base_url}/reading-guide/", wait_until="networkidle")
             post_training_link = page.get_by_role(
                 "link",
                 name=re.compile(r"^从现成 Instruct checkpoint 出发，后训练还能把能力推多远"),
@@ -384,7 +478,7 @@ def run() -> None:
             page.goto(f"{base_url}/papers/arxiv-2608.09867/", wait_until="networkidle")
             expect(page.locator("h1")).to_contain_text("加密推理块不是保险箱")
             expect(page.locator(".paper-reading-card__route")).to_contain_text("本阶段 4/4")
-            expect(page.locator(".paper-reading-card__route")).to_contain_text("全路线 37/66")
+            expect(page.locator(".paper-reading-card__route")).to_contain_text("全路线 38/67")
             expect(page.locator(".evidence-link")).to_have_count(14)
             first_reasoning_source = page.locator(".evidence-link").first
             expect(first_reasoning_source).to_have_attribute("data-primary", "true")
@@ -393,66 +487,98 @@ def run() -> None:
             )
             expect(page.locator(".paper-reading-card__route nav a")).to_have_count(2)
 
-            page.set_viewport_size({"width": 390, "height": 844})
-            page.reload(wait_until="networkidle")
-            reasoning_mobile_layout = page.evaluate(
-                """() => ({
-                  viewportWidth: document.documentElement.clientWidth,
-                  pageWidth: document.documentElement.scrollWidth,
-                  tables: Array.from(document.querySelectorAll('.md-typeset table')).map(table => {
-                    const wrapper = table.closest('.md-typeset__scrollwrap');
-                    return {
-                      tableWidth: table.scrollWidth,
-                      wrapperWidth: wrapper ? wrapper.clientWidth : table.parentElement.clientWidth
-                    };
-                  })
-                })"""
-            )
-            assert reasoning_mobile_layout["pageWidth"] <= reasoning_mobile_layout["viewportWidth"] + 1
-            assert all(
-                item["wrapperWidth"] <= reasoning_mobile_layout["viewportWidth"]
-                for item in reasoning_mobile_layout["tables"]
-            ), reasoning_mobile_layout
-            page.set_viewport_size({"width": 1600, "height": 1000})
-
-            page.set_viewport_size({"width": 390, "height": 844})
             page.goto(f"{base_url}/papers/tokenization-data-curation/", wait_until="networkidle")
             expect(page.locator(".paper-reading-card__stage-entry")).to_be_visible()
-            expect(page.locator(".paper-reading-card__topline > .evidence-panel-toggle")).to_be_visible()
-            mobile_layout = page.evaluate(
-                """() => {
-                  const rect = selector => document.querySelector(selector).getBoundingClientRect();
-                  const copy = rect('.paper-reading-card__route-copy');
-                  const nav = rect('.paper-reading-card__route nav');
-                  const card = rect('.paper-reading-card');
-                  const footerNav = rect('.reading-route-footer nav');
-                  const pdfToggle = rect('.paper-reading-card__topline > .evidence-panel-toggle');
-                  const details = rect('.paper-reading-card__details');
-                  return {
-                    overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
-                    cardWidth: card.width,
-                    copyWidth: copy.width,
-                    navWidth: nav.width,
-                    navBelowCopy: nav.top >= copy.bottom - 1,
-                    footerWidth: footerNav.width,
-                    pdfDoesNotCoverDetails: pdfToggle.bottom <= details.top
-                  };
-                }"""
-            )
-            assert mobile_layout["overflow"] <= 1, mobile_layout
-            assert mobile_layout["copyWidth"] >= mobile_layout["cardWidth"] * 0.85, mobile_layout
-            assert mobile_layout["navWidth"] >= mobile_layout["cardWidth"] * 0.85, mobile_layout
-            assert mobile_layout["footerWidth"] >= mobile_layout["cardWidth"] * 0.85, mobile_layout
-            assert mobile_layout["navBelowCopy"], mobile_layout
-            assert mobile_layout["pdfDoesNotCoverDetails"], mobile_layout
+            expect(page.locator(".reader-tool-dock > .evidence-panel-toggle")).to_be_visible()
 
             page.goto(f"{base_url}/papers/modern-transformer-block/", wait_until="networkidle")
             expect(page.locator("body")).to_have_class(re.compile(r"reader-modern-transformer-page"))
+            qwen_source = page.locator(
+                'a[href="https://github.com/huggingface/transformers/blob/v4.57.0/'
+                'src/transformers/models/qwen3_next/modeling_qwen3_next.py#L330-L399"]'
+            )
+            expect(qwen_source).to_have_attribute("target", "_blank")
+            expect(qwen_source).to_have_attribute("rel", re.compile(r"\bnoopener\b"))
+            expect(qwen_source).to_have_attribute("rel", re.compile(r"\bnoreferrer\b"))
             expect(page.locator(".paper-reading-card__overview")).not_to_be_visible()
             expect(page.locator(".paper-reading-card__first-pass")).not_to_be_visible()
             expect(page.locator(".modern-block-brief__prerequisites")).to_be_visible()
             expect(page.locator("article h1")).to_contain_text("现代 Transformer Block 的演进")
             expect(page.locator(".modern-block-evolution")).to_be_visible()
+            for callout_selector in (
+                ".admonition.note > .admonition-title",
+                ".admonition.question > .admonition-title",
+                "details.example > summary",
+                ".modern-block-brief__prerequisites > summary",
+                ".concept-lab__boundary > summary",
+                ".attention-head-lab__advanced > summary",
+            ):
+                callout_title = page.locator(callout_selector).first
+                expect(callout_title).to_be_visible()
+                callout_style = callout_title.evaluate(
+                    """title => {
+                      const before = getComputedStyle(title, '::before');
+                      const titleBox = title.getBoundingClientRect();
+                      const range = document.createRange();
+                      range.selectNodeContents(title);
+                      const textBox = range.getBoundingClientRect();
+                      return {
+                        beforeDisplay: before.display,
+                        beforeMask: before.maskImage,
+                        beforeRight: titleBox.left + Number.parseFloat(before.left) +
+                          Number.parseFloat(before.width),
+                        textLeft: textBox.left,
+                        paddingLeft: Number.parseFloat(getComputedStyle(title).paddingLeft)
+                      };
+                    }"""
+                )
+                assert callout_style["beforeDisplay"] != "none", (
+                    callout_selector,
+                    callout_style,
+                )
+                assert callout_style["beforeMask"] != "none", (
+                    callout_selector,
+                    callout_style,
+                )
+                assert callout_style["beforeRight"] < callout_style["textLeft"], (
+                    callout_selector,
+                    callout_style,
+                )
+            reading_card_details = page.locator(".paper-reading-card__details")
+            reading_card_icon = reading_card_details.locator(
+                ".paper-reading-card__details-icon"
+            )
+            expect(reading_card_icon).to_be_visible()
+            reading_card_details.locator(":scope > summary").click()
+            expect(reading_card_details).to_have_attribute("open", "")
+            audit_summary = page.locator(
+                ".paper-figure-evidence > summary",
+                has_text="固定模型发布物、版本身份与运行 ABI 的审计",
+            )
+            expect(audit_summary).to_be_visible()
+            audit_summary_layout = audit_summary.evaluate(
+                """summary => {
+                  const box = summary.getBoundingClientRect();
+                  const before = getComputedStyle(summary, '::before');
+                  const after = getComputedStyle(summary, '::after');
+                  const textRange = document.createRange();
+                  textRange.selectNodeContents(summary);
+                  const textBox = textRange.getBoundingClientRect();
+                  return {
+                    beforeDisplay: before.display,
+                    leftInset: textBox.left - box.left,
+                    rightSpace: box.right - textBox.right,
+                    arrowRight: Number.parseFloat(after.right),
+                    arrowWidth: Number.parseFloat(after.width),
+                    boxWidth: box.width
+                  };
+                }"""
+            )
+            assert audit_summary_layout["beforeDisplay"] != "none", audit_summary_layout
+            assert audit_summary_layout["leftInset"] >= 32, audit_summary_layout
+            assert audit_summary_layout["rightSpace"] >= 32, audit_summary_layout
+            assert audit_summary_layout["arrowRight"] >= 10, audit_summary_layout
+            assert audit_summary_layout["arrowWidth"] >= 14, audit_summary_layout
             narrative_structure = page.evaluate(
                 """() => {
                   const evolution = document.querySelector('.modern-block-evolution');
@@ -675,24 +801,6 @@ def run() -> None:
             assert reward_layout["labOverflow"] <= 1, reward_layout
             assert reward_layout["clippedButtons"] == 0, reward_layout
 
-            page.set_viewport_size({"width": 390, "height": 844})
-            mobile_reward_layout = reward_lab.evaluate(
-                """root => ({
-                  pageOverflow: document.documentElement.scrollWidth
-                    - document.documentElement.clientWidth,
-                  labOverflow: root.scrollWidth - root.clientWidth,
-                  pipelineColumns: getComputedStyle(root.querySelector('.reward-clock-lab__pipeline'))
-                    .gridTemplateColumns.split(' ').length,
-                  readoutColumns: getComputedStyle(root.querySelector('.reward-clock-lab__readout'))
-                    .gridTemplateColumns.split(' ').length
-                })"""
-            )
-            assert mobile_reward_layout["pageOverflow"] <= 1, mobile_reward_layout
-            assert mobile_reward_layout["labOverflow"] <= 1, mobile_reward_layout
-            assert mobile_reward_layout["pipelineColumns"] == 1, mobile_reward_layout
-            assert mobile_reward_layout["readoutColumns"] == 1, mobile_reward_layout
-            page.set_viewport_size({"width": 1600, "height": 1000})
-
             page.goto(f"{base_url}/papers/arxiv-1706.03762/", wait_until="networkidle")
 
             panel = page.locator(".evidence-panel")
@@ -702,7 +810,7 @@ def run() -> None:
             expect(page.locator(".reader-section-tools__current small")).to_have_text(re.compile(r"1 / \d+"))
             expect(page.locator(".paper-reading-card__details")).to_be_visible()
             expect(page.locator(".paper-reading-card__route")).to_contain_text("本阶段 5/7")
-            expect(page.locator(".paper-reading-card__route")).to_contain_text("全路线 5/66")
+            expect(page.locator(".paper-reading-card__route")).to_contain_text("全路线 5/67")
             expect(page.locator(".paper-reading-card__route")).to_contain_text("从上一篇到本篇")
             expect(page.locator(".paper-reading-card__route nav a")).to_have_count(2)
             expect(page.locator(".reading-route-footer")).to_be_visible()
@@ -737,6 +845,21 @@ def run() -> None:
             expect(page.locator('[data-action="new-thread"]')).to_be_enabled()
             expect(page.locator('[data-setting="knowledge-model"]')).to_have_value("gpt-5.6-terra")
             expect(page.locator('[data-setting="knowledge-effort"]')).to_have_value("medium")
+            history_answer = page.locator('.knowledge-message[data-message-id="history-assistant"]')
+            expect(history_answer.locator(".knowledge-math-inline mjx-container")).to_be_visible(timeout=5_000)
+            expect(history_answer.locator(".knowledge-math-block mjx-container")).to_be_visible(timeout=5_000)
+            history_math_layout = history_answer.evaluate(
+                """element => [...element.querySelectorAll('.knowledge-math-inline, .knowledge-math-block')]
+                  .map(math => {
+                    const output = math.querySelector('mjx-container');
+                    const rect = output?.getBoundingClientRect();
+                    return {hasOutput: Boolean(output), width: rect?.width || 0, height: rect?.height || 0};
+                  })"""
+            )
+            assert all(
+                item["hasOutput"] and item["width"] > 0 and item["height"] > 0
+                for item in history_math_layout
+            ), history_math_layout
             expect(page.locator('.knowledge-message[data-message-id="history-user"] .knowledge-message__pdf')).to_be_visible()
             expect(page.locator('.knowledge-message[data-message-id="history-user"] canvas[data-rendered="true"]')).to_be_visible(timeout=15_000)
             layout = page.locator(".knowledge-assistant").evaluate(
@@ -832,11 +955,44 @@ def run() -> None:
             expect(translation_block.locator(".translation-block__label")).to_contain_text("p0002-b001")
             expect(translation_block.locator(".translation-block__natural")).to_have_text("正文第 1 段")
             expect(translation_block.locator(".translation-block__confidence")).to_contain_text("高置信度")
+            overlay_bounds = viewer.locator('.pdf-page[data-page="2"]').evaluate(
+                """pdfPage => {
+                  const overlay = pdfPage.querySelector('.pdf-block-overlay');
+                  const highlight = overlay.querySelector('[data-block-id="p0002-b001"]');
+                  return {
+                    pageWidth: pdfPage.clientWidth,
+                    overlayWidth: overlay.clientWidth,
+                    highlightLeft: highlight.offsetLeft,
+                    highlightRight: highlight.offsetLeft + highlight.offsetWidth,
+                    pageOverflow: getComputedStyle(pdfPage).overflow,
+                    overlayOverflow: getComputedStyle(overlay).overflow
+                  };
+                }"""
+            )
+            assert overlay_bounds["highlightLeft"] >= 0, overlay_bounds
+            assert overlay_bounds["highlightRight"] <= overlay_bounds["pageWidth"], overlay_bounds
+            assert overlay_bounds["overlayWidth"] == overlay_bounds["pageWidth"], overlay_bounds
+            assert overlay_bounds["pageOverflow"] == "clip", overlay_bounds
+            assert overlay_bounds["overlayOverflow"] == "hidden", overlay_bounds
             expect(viewer.locator(".translation-table-data th")).to_have_text(["模型", "质量"])
             expect(viewer.locator(".translation-table-data tbody tr")).to_have_count(2)
             expect(viewer.locator(".translation-figure-data")).to_contain_text("输入经过编码器与解码器后生成输出")
             expect(viewer.locator(".translation-figure-flow li")).to_have_count(2)
             expect(viewer.locator(".translation-figure-labels")).to_contain_text("Inputs")
+            figure_label_layout = viewer.locator(".translation-figure-labels").evaluate(
+                """labels => {
+                  const original = labels.querySelector("dt");
+                  const translated = labels.querySelector("dd");
+                  return {
+                    labelsWidth: labels.getBoundingClientRect().width,
+                    originalWidth: original.getBoundingClientRect().width,
+                    translatedWidth: translated.getBoundingClientRect().width
+                  };
+                }"""
+            )
+            assert figure_label_layout["labelsWidth"] > 200, figure_label_layout
+            assert figure_label_layout["originalWidth"] >= 80, figure_label_layout
+            assert figure_label_layout["translatedWidth"] >= 120, figure_label_layout
             expect(viewer.locator("#retranslation-controls")).to_be_visible()
             expect(viewer.locator("#retranslation-model")).to_have_value("gpt-5.6-terra")
             expect(viewer.locator("#retranslation-effort")).to_have_value("medium")
@@ -896,6 +1052,7 @@ def run() -> None:
             full_start_request = viewer.locator("body").evaluate("() => window.__translationFullStartCalls.at(-1)")
             assert full_start_request["model"] == "gpt-5.6-sol"
             assert full_start_request["reasoning_effort"] == "xhigh"
+            assert full_start_request["concurrency"] == 16
             expect(viewer.locator("#translate-all")).to_have_text("停止全文")
             expect(viewer.locator("#translate-all")).to_have_attribute("aria-busy", "true")
             expect(viewer.locator("#full-translation-progress")).to_contain_text("/15")
@@ -911,7 +1068,7 @@ def run() -> None:
                 total: 15,
                 current_pages: [],
                 current_started_at: "2026-01-01T00:00:00Z",
-                concurrency: 8,
+                concurrency: 16,
                 failures: 2,
                 last_error: "第 8 页：模型服务调用失败（HTTP 502）"
               };
@@ -964,6 +1121,29 @@ def run() -> None:
             page.locator('[data-setting="knowledge-model"]').select_option("gpt-5.6-sol")
             page.locator('[data-setting="knowledge-effort"]').select_option("xhigh")
             page.wait_for_function("() => window.__knowledgeSettingsRequests.length === 2")
+            state_requests_before_duplicate_init = page.evaluate(
+                "() => window.__knowledgeStateRequests"
+            )
+            page.evaluate(
+                """() => {
+                  window.__faqTestState.knowledge_settings = {
+                    model: "gpt-5.6-terra",
+                    effort: "medium"
+                  };
+                  window.dispatchEvent(new Event("reader:evidence-panel-ready"));
+                  window.dispatchEvent(new Event("reader:evidence-panel-ready"));
+                }"""
+            )
+            page.wait_for_timeout(100)
+            expect(page.locator('[data-setting="knowledge-model"]')).to_have_value(
+                "gpt-5.6-sol"
+            )
+            expect(page.locator('[data-setting="knowledge-effort"]')).to_have_value(
+                "xhigh"
+            )
+            assert page.evaluate(
+                "() => window.__knowledgeStateRequests"
+            ) == state_requests_before_duplicate_init
             page.locator(".knowledge-composer textarea").fill("解释第七页图表")
             page.locator('[data-action="send"]').click()
             expect(page.locator(".knowledge-context")).to_have_count(0)
@@ -1123,6 +1303,12 @@ def run() -> None:
 
             remote_requests = []
             page.on("request", lambda request: remote_requests.append(request.url) if not request.url.startswith(base_url) else None)
+            page.goto(f"{base_url}/papers/arxiv-1810.04805/", wait_until="networkidle")
+            assert page.title().startswith("09 · 从 Causal LLM 到 BERT"), page.title()
+            assert "09 · 09 ·" not in page.title(), page.title()
+            page.goto(f"{base_url}/papers/arxiv-1910.10683/", wait_until="networkidle")
+            assert page.title().startswith("10 · 从 BERT 到 T5"), page.title()
+            assert "10 · 10 ·" not in page.title(), page.title()
             page.goto(f"{base_url}/papers/arxiv-1810.04805/", wait_until="networkidle")
             expect(page.locator(".evidence-panel")).not_to_be_visible()
             page.locator(".evidence-panel-toggle").click()

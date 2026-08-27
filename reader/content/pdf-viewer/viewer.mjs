@@ -86,6 +86,7 @@ const translationModelKey = "research-reader-translation-model";
 const translationEffortKey = "research-reader-translation-effort";
 const legacyTranslationModelKey = "research-reader-translation-retranslation-model";
 const legacyTranslationEffortKey = "research-reader-translation-retranslation-effort";
+const fullTranslationConcurrency = 16;
 const revisionModels = new Set(["gpt-5.6-terra", "gpt-5.6-sol"]);
 const revisionReasoningEfforts = new Set(["medium", "high", "xhigh", "max", "ultra"]);
 const combiningMathDisplayReplacements = new Map([
@@ -175,39 +176,64 @@ function refreshLocationBadges(blocks) {
   }
 }
 
+function overlayRectangle(record, box) {
+  if (!record?.page || !Array.isArray(box) || box.length !== 4) return null;
+  const viewport = record.page.getViewport({ scale: scaleFor(record) });
+  const rectangle = viewport.convertToViewportRectangle(box);
+  // PDF text extraction and visual matching can produce coordinates just
+  // outside the MediaBox (especially for glyphs in the margin). Never let
+  // those coordinates escape the page element into the workspace gutter.
+  const pageWidth = Math.max(0, Math.min(
+    viewport.width,
+    record.element?.clientWidth || viewport.width
+  ));
+  const pageHeight = Math.max(0, Math.min(
+    viewport.height,
+    record.element?.clientHeight || viewport.height
+  ));
+  const rawLeft = Math.min(rectangle[0], rectangle[2]);
+  const rawTop = Math.min(rectangle[1], rectangle[3]);
+  const rawRight = Math.max(rectangle[0], rectangle[2]);
+  const rawBottom = Math.max(rectangle[1], rectangle[3]);
+  const left = Math.max(0, Math.min(pageWidth, rawLeft));
+  const top = Math.max(0, Math.min(pageHeight, rawTop));
+  const right = Math.max(0, Math.min(pageWidth, rawRight));
+  const bottom = Math.max(0, Math.min(pageHeight, rawBottom));
+  const width = right - left;
+  const height = bottom - top;
+  return width > 0 && height > 0 ? { left, top, width, height } : null;
+}
+
 function updateBlockOverlay(record) {
   if (!record?.blockOverlay) return;
   record.blockOverlay.replaceChildren();
   if (Array.isArray(record.citationBox)) {
-    const rectangle = record.page.getViewport({ scale: scaleFor(record) }).convertToViewportRectangle(record.citationBox);
-    const marker = document.createElement("div");
-    marker.className = "pdf-citation-highlight";
-    marker.title = `引用位置：${citationLocator}`;
-    marker.style.left = `${Math.min(rectangle[0], rectangle[2])}px`;
-    marker.style.top = `${Math.min(rectangle[1], rectangle[3])}px`;
-    marker.style.width = `${Math.abs(rectangle[2] - rectangle[0])}px`;
-    marker.style.height = `${Math.abs(rectangle[3] - rectangle[1])}px`;
-    record.blockOverlay.appendChild(marker);
+    const rectangle = overlayRectangle(record, record.citationBox);
+    if (rectangle) {
+      const marker = document.createElement("div");
+      marker.className = "pdf-citation-highlight";
+      marker.title = `引用位置：${citationLocator}`;
+      marker.style.left = `${rectangle.left}px`;
+      marker.style.top = `${rectangle.top}px`;
+      marker.style.width = `${rectangle.width}px`;
+      marker.style.height = `${rectangle.height}px`;
+      record.blockOverlay.appendChild(marker);
+    }
   }
-  const viewport = record.page.getViewport({ scale: scaleFor(record) });
   for (const block of record.translationBlocks || []) {
     if (!Array.isArray(block.bbox) || block.bbox.length !== 4) continue;
-    const rectangle = viewport.convertToViewportRectangle(block.bbox);
-    const left = Math.min(rectangle[0], rectangle[2]);
-    const top = Math.min(rectangle[1], rectangle[3]);
-    const width = Math.abs(rectangle[2] - rectangle[0]);
-    const height = Math.abs(rectangle[3] - rectangle[1]);
-    if (!(width > 0 && height > 0)) continue;
+    const rectangle = overlayRectangle(record, block.bbox);
+    if (!rectangle) continue;
     const highlight = document.createElement("button");
     highlight.type = "button";
     highlight.className = "pdf-block-highlight";
     highlight.classList.toggle("is-selected", block.id === record.selectedBlockId);
     highlight.dataset.blockId = block.id;
     highlight.title = `${blockLabel(block)} · ${block.id}`;
-    highlight.style.left = `${left}px`;
-    highlight.style.top = `${top}px`;
-    highlight.style.width = `${width}px`;
-    highlight.style.height = `${height}px`;
+    highlight.style.left = `${rectangle.left}px`;
+    highlight.style.top = `${rectangle.top}px`;
+    highlight.style.width = `${rectangle.width}px`;
+    highlight.style.height = `${rectangle.height}px`;
     highlight.addEventListener("click", () => focusPdfBlock(block, "pdf"));
     record.blockOverlay.appendChild(highlight);
   }
@@ -267,12 +293,12 @@ function centerTranslationBlock(blockId, behavior = "smooth") {
 }
 
 function centerPdfBox(record, box, behavior = "smooth") {
-  const pageViewport = record.page.getViewport({ scale: scaleFor(record) });
-  const rectangle = pageViewport.convertToViewportRectangle(box);
+  const rectangle = overlayRectangle(record, box);
+  if (!rectangle) return;
   const viewportBounds = viewportElement.getBoundingClientRect();
   const pageBounds = record.element.getBoundingClientRect();
-  const targetX = (rectangle[0] + rectangle[2]) / 2;
-  const targetY = (rectangle[1] + rectangle[3]) / 2;
+  const targetX = rectangle.left + rectangle.width / 2;
+  const targetY = rectangle.top + rectangle.height / 2;
   const targetCenterX = viewportElement.scrollLeft + pageBounds.left - viewportBounds.left + targetX;
   const targetCenterY = viewportElement.scrollTop + pageBounds.top - viewportBounds.top + targetY;
   if (behavior === "smooth") suspendPageDetectionUntilSettled(500);
@@ -752,7 +778,7 @@ function applyFullTranslationJob(state) {
       ? state.current_pages.join(", ")
       : (Number(state.current_page) || 0),
     currentPages: Array.isArray(state.current_pages) ? state.current_pages : [],
-    concurrency: Number(state.concurrency) || 8,
+    concurrency: Number(state.concurrency) || fullTranslationConcurrency,
     model: state.model || "",
     reasoningEffort: state.reasoning_effort || "",
     failures: Number(state.failures) || 0,
@@ -865,6 +891,7 @@ async function translateAllPages(force = false) {
         source_id: sourceId,
         page: pageNumber,
         force,
+        concurrency: fullTranslationConcurrency,
         model: retranslationModelSelect.value,
         reasoning_effort: retranslationEffortSelect.value
       })
@@ -1295,10 +1322,18 @@ viewportElement.addEventListener("pointercancel", finishPdfPan);
 viewportElement.addEventListener("click", suppressClickAfterPdfPan, true);
 viewportElement.addEventListener("scroll", scheduleCurrentPageDetection, { passive: true });
 let viewportVisible = viewportElement.clientWidth > 1 && viewportElement.clientHeight > 1;
+let viewportWidth = viewportElement.clientWidth;
+let viewportHeight = viewportElement.clientHeight;
 new ResizeObserver(() => {
-  const visible = viewportElement.clientWidth > 1 && viewportElement.clientHeight > 1;
-  if (visible === viewportVisible) return;
+  const nextWidth = viewportElement.clientWidth;
+  const nextHeight = viewportElement.clientHeight;
+  const visible = nextWidth > 1 && nextHeight > 1;
+  const visibilityChanged = visible !== viewportVisible;
+  const sizeChanged = nextWidth !== viewportWidth || nextHeight !== viewportHeight;
+  if (!visibilityChanged && !sizeChanged) return;
   viewportVisible = visible;
+  viewportWidth = nextWidth;
+  viewportHeight = nextHeight;
   pageDetectionSuspended = true;
   pageDetectionGeneration += 1;
   if (scrollFrame) cancelAnimationFrame(scrollFrame);
@@ -1309,7 +1344,14 @@ new ResizeObserver(() => {
     return;
   }
   if (!pdfDocument) return;
-  if (scaleMode === "fit") updatePageLayouts();
+  if (scaleMode === "fit") {
+    updatePageLayouts();
+    renderNearPage(pageNumber);
+  }
+  if (!visibilityChanged) {
+    suspendPageDetectionUntilSettled();
+    return;
+  }
   scrollToPage(pageNumber);
   if (readerToken) {
     loadTranslationState({ preserveScroll: true });

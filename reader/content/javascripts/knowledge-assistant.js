@@ -35,8 +35,12 @@
   let knowledgeSettings = { model: "gpt-5.6-terra", effort: "medium" };
   let knowledgeSettingsSave = Promise.resolve();
   let knowledgeSettingsVersion = 0;
+  let knowledgeSettingsTouched = false;
   let revisionDiscussions = [];
   let shouldRevealLatestMessage = false;
+  let initializedPanel = null;
+  let mathTypesetQueue = Promise.resolve();
+  const pendingMathBodies = new WeakSet();
 
   function revealMessage(element, behavior = "auto") {
     if (!element || !messageList?.clientHeight) return;
@@ -64,7 +68,15 @@
     });
     document.body.classList.add("evidence-panel-open");
     if (panel) panel.dataset.readerActivePane = name;
-    if (name === "assistant") requestAnimationFrame(revealLatestMessage);
+    if (name === "assistant") {
+      // MathJax cannot measure formulas while the assistant pane is display:none.
+      // Re-typeset after the pane is visible so hidden answers do not retain a
+      // zero-width container and wrap one symbol per line.
+      requestAnimationFrame(() => {
+        typesetVisibleMessages();
+        revealLatestMessage();
+      });
+    }
   }
 
   function createUi() {
@@ -400,9 +412,29 @@
 
   function typesetMessage(body) {
     const mathJax = window.MathJax;
-    if (!mathJax?.typesetPromise) return;
-    mathJax.typesetClear?.([body]);
-    mathJax.typesetPromise([body]).catch(() => {});
+    if (!body?.getClientRects().length || body.clientWidth <= 0) return;
+    if (!mathJax?.typesetPromise) {
+      mathJax?.startup?.promise?.then(() => typesetMessage(body)).catch(() => {});
+      return;
+    }
+    const mathNodes = Array.from(body.querySelectorAll(".knowledge-math-inline, .knowledge-math-block"));
+    if (!mathNodes.some(node => !node.querySelector("mjx-container")) || pendingMathBodies.has(body)) return;
+    pendingMathBodies.add(body);
+    mathTypesetQueue = mathTypesetQueue
+      .catch(() => undefined)
+      .then(() => {
+        if (!body.isConnected || !body.getClientRects().length || body.clientWidth <= 0) return;
+        const pendingNodes = Array.from(body.querySelectorAll(".knowledge-math-inline, .knowledge-math-block"));
+        if (!pendingNodes.some(node => !node.querySelector("mjx-container"))) return;
+        return mathJax.typesetPromise([body]);
+      })
+      .catch(() => undefined)
+      .finally(() => pendingMathBodies.delete(body));
+  }
+
+  function typesetVisibleMessages() {
+    if (!assistantPane?.getClientRects().length) return;
+    assistantPane.querySelectorAll(".knowledge-rich-text").forEach(typesetMessage);
   }
 
   function renderRichText(element, value) {
@@ -419,7 +451,6 @@
     frame.setAttribute("loading", "lazy");
     const base = [
       '<meta charset="utf-8">',
-      '<meta name="viewport" content="width=device-width,initial-scale=1">',
       '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'unsafe-inline\'; style-src \'unsafe-inline\'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src \'none\'; form-action \'none\'; base-uri \'none\'">',
       '<style>html,body{margin:0;padding:0;background:transparent;color:#263238;font:14px/1.5 system-ui,sans-serif}*{box-sizing:border-box}svg,canvas,img{max-width:100%;height:auto}button,input,select{font:inherit}</style>'
     ].join("");
@@ -436,13 +467,6 @@
     });
     return frame;
   }
-
-  const revisionKindLabels = {
-    supplement: "补充结论",
-    correction: "修正结论",
-    replacement: "当前采用版本",
-    example: "解释与示例"
-  };
 
   function revisionDisplayKey() {
     return `reader-revision-display:${taskId || "reader"}:${documentId || "document"}`;
@@ -475,12 +499,12 @@
 
   function revisionCard(item) {
     const card = document.createElement("aside");
-    card.className = `reader-revision reader-revision--${item.kind || "supplement"}`;
+    card.className = "reader-revision";
     card.dataset.revisionId = item.id || "";
     const header = document.createElement("header");
     const label = document.createElement("span");
-    label.className = "reader-revision__kind";
-    label.textContent = revisionKindLabels[item.kind] || "本地修订";
+    label.className = "reader-revision__source";
+    label.textContent = item.source === "manual" ? "手动修改" : "AI 修订";
     const title = document.createElement("strong");
     title.textContent = item.title;
     header.append(label, title);
@@ -966,13 +990,12 @@
     dialog.innerHTML = [
       "<h3>编辑选中的正文</h3>",
       '<div class="reader-revision-editor__controls">',
-      '<label>修订方式<select name="kind"><option value="supplement">补充结论</option><option value="correction">修正结论</option><option value="replacement">替代为当前结论</option><option value="example">增加解释、公式或图解</option></select></label>',
       '<div class="reader-revision-editor__model">',
       '<label>模型<select name="model"><option value="gpt-5.6-terra">gpt-5.6-terra</option><option value="gpt-5.6-sol">gpt-5.6-sol</option></select></label>',
       '<label>推理强度<select name="effort"><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option><option value="max">max</option><option value="ultra">ultra</option></select></label>',
       "</div>",
-      '<label>希望如何修改<textarea name="instruction" maxlength="2000" required placeholder="例如：补充该结论的适用边界，并用一个简化图解释"></textarea></label>',
-      '<p>可以围绕候选继续追问，并从任意一轮中选择最终修订；原文不会被直接覆盖。</p>',
+      '<label>修改要求<textarea name="instruction" maxlength="2000" required placeholder="例如：核对这段结论的适用边界，并用一个简化图解释"></textarea></label>',
+      '<p>可继续追问候选；原文不会被直接覆盖。</p>',
       "</div>",
       '<div class="reader-revision-editor__preview"></div>',
       '<div class="reader-revision-editor__actions"></div>'
@@ -1032,7 +1055,6 @@
             document_id: documentId,
             document_sha256: documentSha,
             contexts: selection.contexts,
-            kind: dialog.elements.kind.value,
             instruction: dialog.elements.instruction.value.trim(),
             pdf_contexts: pdfContexts,
             model: dialog.elements.model.value,
@@ -1056,8 +1078,6 @@
       item.status === "draft" && JSON.stringify(item.target_blocks) === JSON.stringify(selectedIds)
     );
     if (draft) {
-      const latestKind = draft.turns?.at(-1)?.candidate?.kind;
-      dialog.elements.kind.value = latestKind || draft.kind || "supplement";
       discardDiscussion.hidden = false;
       showRevisionDiscussion(draft, overlay, dialog);
     } else {
@@ -1369,19 +1389,22 @@
       model: knowledgeModelSelect.value,
       effort: knowledgeEffortSelect.value
     };
+    const requestedDocumentId = documentId;
+    knowledgeSettingsTouched = true;
     const version = ++knowledgeSettingsVersion;
     knowledgeSettingsSave = knowledgeSettingsSave
       .catch(() => undefined)
       .then(() => api("/api/chat/settings", {
         method: "POST",
-        body: JSON.stringify({ document_id: documentId, ...requested })
+        body: JSON.stringify({ document_id: requestedDocumentId, ...requested })
       }))
       .then(saved => {
+        if (version !== knowledgeSettingsVersion || requestedDocumentId !== documentId) return;
         knowledgeSettings = { model: saved.model, effort: saved.effort };
-        if (version === knowledgeSettingsVersion) applyKnowledgeSettings(saved);
+        applyKnowledgeSettings(saved);
       })
       .catch(error => {
-        if (version === knowledgeSettingsVersion) {
+        if (version === knowledgeSettingsVersion && requestedDocumentId === documentId) {
           applyKnowledgeSettings(knowledgeSettings);
           sessionLabel.textContent = error.message;
         }
@@ -1445,16 +1468,24 @@
   }
 
   async function loadState(threadId = "") {
+    const requestedDocumentId = documentId;
+    const settingsVersion = knowledgeSettingsVersion;
     const query = new URLSearchParams({ document_id: documentId });
     if (threadId) query.set("thread_id", threadId);
     const state = await api(`/api/state?${query}`, { method: "GET" });
+    if (requestedDocumentId !== documentId) return;
     applyChatState(state);
     renderFaq(state);
     renderRevisions(state.revisions?.items || []);
     if (state.revision_settings?.model && state.revision_settings?.effort) {
       revisionSettings = state.revision_settings;
     }
-    if (state.knowledge_settings?.model && state.knowledge_settings?.effort) {
+    if (
+      state.knowledge_settings?.model
+      && state.knowledge_settings?.effort
+      && !knowledgeSettingsTouched
+      && settingsVersion === knowledgeSettingsVersion
+    ) {
       applyKnowledgeSettings(state.knowledge_settings);
     }
     revisionDiscussions = state.revision_discussions?.items || [];
@@ -1758,9 +1789,17 @@
 
   async function initializePage() {
     const metadata = document.querySelector(".reader-document-meta");
-    documentId = metadata?.dataset.documentId;
-    documentSha = metadata?.dataset.documentSha256;
-    if (!documentId || !createUi()) return;
+    const nextDocumentId = metadata?.dataset.documentId;
+    const nextDocumentSha = metadata?.dataset.documentSha256;
+    const panel = document.querySelector(".evidence-panel");
+    if (!nextDocumentId || !panel || panel === initializedPanel || !createUi()) return;
+    initializedPanel = panel;
+    documentId = nextDocumentId;
+    documentSha = nextDocumentSha;
+    knowledgeSettings = { model: "gpt-5.6-terra", effort: "medium" };
+    knowledgeSettingsTouched = false;
+    knowledgeSettingsVersion += 1;
+    knowledgeSettingsSave = Promise.resolve();
     if (window.__readerPdfContext?.sourceId) {
       currentPdfContext = {
         source_id: window.__readerPdfContext.sourceId,

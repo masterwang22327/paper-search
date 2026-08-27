@@ -15,6 +15,10 @@ cd /path/to/paper_search/reader
 
 PDF 阅读器顶部只保留“译文”开关；打开右侧译文栏后，可分别翻译本页、后台补齐全文和查看全文缓存状态。全文翻译只处理未缓存页面，全部缓存后按钮会变为“全文已缓存”并停止重复启动任务。“重新翻译”允许选择 `gpt-5.6-terra` 或 `gpt-5.6-sol`，以及 `medium/high/xhigh/max/ultra` 推理强度，选择保存在当前浏览器。翻译按物理页直接调用无状态 Responses API，不创建或续接 Codex Session；跨页一致性由本地 glossary 和相邻页摘录提供。译文块使用“正文第 1 段”等自然标签，点击块会回查对应 PDF 页，将匹配区域置于 PDF 视口中央；放大后可按住 PDF 内容拖拽平移视图。知识问答运行时不会持有 PDF/翻译共用的长时锁；PDF 标签隐藏后暂停状态轮询，恢复时保持原页码并重新检查当前页缓存。缓存位于 `user-data/<TASK_ID>/translations.sqlite3`（需要兼容旧工具时可用 `restore.sh` 恢复为目录）。左侧项目栏可通过页面左上方的 `‹/›` 按钮收起或展开，状态会在浏览器本地保存。
 
+知识问答和“AI 修订”通过本机 Codex CLI 调用，复用 `codex login` 的认证状态与当前
+`~/.codex/config.toml` provider；修订使用临时会话和 JSON Schema，不把 Codex 凭据复制到 Reader。
+PDF 翻译是独立的无状态 Responses API 管线，仍按下述端点匹配规则读取专用凭据。
+
 右侧使用固定在 `reader/content/vendor/` 的本地 PDF.js，不依赖浏览器内置 PDF Viewer。MathJax 与字体同样已本地化，阅读时不会向 CDN 请求资源。
 
 ## 知识问答与固化
@@ -22,9 +26,11 @@ PDF 阅读器顶部只保留“译文”开关；打开右侧译文栏后，可�
 `./serve.sh` 会启动只监听 `127.0.0.1:8000` 的本地动态服务，并调用本机已经登录的 Codex CLI。网页不会读取、复制或显示 Codex 凭据。
 
 - 每份综合报告/专题精读可以保留多个独立 Codex 对话；同一时间只有一个对话可继续调用。
+- 知识问答以当前论文和本地调研内容为证据基线；遇到最新状态、官方 API、源码实现或相关论文问题时，会按问题需要使用可用的联网、搜索、浏览器和 MCP 工具，并在回答中标明外部来源。
 - 用户可把当前对话归档为只读历史，再新建一个干净的 Codex Session；刷新或退出后仍可切换查看所有历史对话。
 - Codex 调用失败时，本轮问题和失败状态也会保存在当前对话中，不会因页面与底层 Session 状态分叉而丢失。
 - 在正文的一个段落内选择文字，会出现“加入知识问答上下文”；后端使用块 ID、字符偏移和构建哈希重新验证选区。
+- 选择“AI 修订”后只需用自然语言描述修改目标，系统直接生成一份可审阅的正文候选，不再对修改意图额外分类。需要完全控制文本时使用“手动修改”。
 - “加入当前 PDF 页图像”只发送来源 ID 与物理页；后端从固定 PDF 渲染完整 PNG，通过 Codex CLI 的 `--image` 加入当前会话，不信任前端文件路径或标题。
 - 每轮视觉问答会附带精读文档标题/路径/哈希，以及论文标题、作者、官方记录、固定来源 ID、PDF 哈希和页码信息；这些元数据均从只读任务目录生成。
 - 页面图像只存在于系统临时目录，Codex 返回或调用失败后都会自动删除，不进入仓库或运行时数据库。
@@ -50,14 +56,18 @@ SQLite 中仍以原相对路径作为主键保存每个工件的完整字节、�
 任务中的 canonical PDF 和论文 Markdown 保持普通文件；非 PDF 来源工件、已完成 handoff、历史 run 和 work
 中间件可保存在 `tasks/<TASK_ID>/artifacts.sqlite3`。Reader 会按原逻辑路径直接查询该数据库。
 
-翻译默认使用 `https://www.sevnx.one/v1/responses`、`gpt-5.6-terra` 和 `medium` reasoning effort。
+翻译端点默认读取 `$CODEX_HOME/config.toml`（未设置时为 `~/.codex/config.toml`）中当前
+`model_provider` 的 Responses 配置，并使用其 `base_url + /responses`。代码中不内置备用 API URL；
+配置缺失、无效或当前 provider 不是 `wire_api = "responses"` 时，直连翻译会返回明确的配置错误。
+每次无状态请求前都会重新读取 provider 与 Key，因此运行中切换 Codex 端点或轮换 API Key 也会自动生效。
+常规翻译仍默认使用 `gpt-5.6-terra` 和 `medium` reasoning effort。
 重新翻译会忽略缓存，默认使用 `gpt-5.6-sol` 和 `high`；也可在译文栏切换到允许的模型与推理强度。翻译采用文本层确定覆盖范围、页面图像校准
 公式与版面的双源流程，并在保存前复核易错数学符号。
 
 当 Reader 的 Responses URL 与本机 Codex 当前 provider 的 `base_url + /responses` 精确匹配时，
-Reader 会复用 Codex `auth.json` 中的 `OPENAI_API_KEY`。端点不匹配时不会转发该凭据，必须显式配置
-目标端点自己的 `READER_TRANSLATION_API_KEY`。当 URL 为 `https://api.openai.com/v1/responses` 时，
-也允许回退读取 `OPENAI_API_KEY` 或 Codex API Key。
+Reader 会按 provider 的认证方式读取 Codex `auth.json` 中的 `OPENAI_API_KEY`，或读取 `env_key` 指定的
+环境变量。端点不匹配时不会转发该凭据，必须显式配置
+目标端点自己的 `READER_TRANSLATION_API_KEY`。
 密钥只存在于进程环境和请求头，不写入 Reader 文件。不要把密钥直接写进命令历史、README、配置文件
 或 Git remote URL。
 

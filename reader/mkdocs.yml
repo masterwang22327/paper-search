@@ -9,6 +9,7 @@ hooks:
 
 theme:
   name: material
+  custom_dir: overrides
   language: zh
   font: false
   features:
@@ -69,15 +70,16 @@ markdown_extensions:
       custom_checkbox: true
 
 extra_css:
-  - stylesheets/extra.css?v=20260805-2
-  - stylesheets/concept-labs.css?v=20260805-1
-  - stylesheets/knowledge-assistant.css?v=20260807-1
+  - stylesheets/extra.css?v=20260826-1
+  - stylesheets/concept-labs.css?v=20260821-2
+  - stylesheets/knowledge-assistant.css?v=20260826-1
 
 extra_javascript:
   - javascripts/mathjax.js
-  - javascripts/evidence-panel.js?v=20260803-1
-  - javascripts/knowledge-assistant.js?v=20260806-2
-  - javascripts/reader-layout.js?v=20260723-1
+  - javascripts/external-links.js?v=20260820-1
+  - javascripts/evidence-panel.js?v=20260818-6
+  - javascripts/knowledge-assistant.js?v=20260826-2
+  - javascripts/reader-layout.js?v=20260818-6
   - javascripts/concept-labs.js?v=20260804-4
   - vendor/mathjax/tex-mml-chtml.js
 

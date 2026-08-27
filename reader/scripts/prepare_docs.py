@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import sys
+from functools import lru_cache
 from pathlib import Path, PurePosixPath
 
 import yaml
@@ -44,10 +45,26 @@ NAV_TITLE_OVERRIDES = {
     "arxiv-1706.03762.md": "Attention Is All You Need：用自注意力替代序列递归",
 }
 
-BACKTICK_PATH = re.compile(r"`((?:papers|sources)/[^`\n]+)`")
-MARKDOWN_PATH = re.compile(r"(?<=\]\()((?:papers|sources)/[^)\s]+)")
+BACKTICK_PATH = re.compile(
+    r"(?<!\[)`((?:papers|sources)/[^`\n]+)`((?::\d+(?:--?\d+)?))?"
+)
+MARKDOWN_PATH = re.compile(
+    r"(?<=\]\()((?:(?:\.\./)+)?(?:papers|sources)/[^)\s]+)"
+)
 STATE_MATRIX_PATH = re.compile(r"(?<=\]\()(state/coverage-matrix-[^)\s]+)")
 ADMISSION_PATH = re.compile(r"(?<=\]\()((?:(?:\.\./)+)?reader/reading-admission\.yml)")
+SOURCE_TABLE_ROW = re.compile(r"^\|\s*`([^`]+)`\s*\|")
+EXTERNAL_URL = re.compile(r"https?://[^\s|`<>]+")
+SOURCE_LOCATION = re.compile(r"^(.*?)(?::(\d+)(?:--?(\d+))?)?$")
+ARXIV_SOURCE_ID = re.compile(r"^arxiv-(\d{4}\.\d{4,5})(v\d+)?$")
+ROUTE_NUMBER_PREFIX = re.compile(r"^(?:\d{1,3}\s*·\s*)+")
+TRANSFORMERS_ARTIFACT = re.compile(
+    r"^transformers-(?P<filename>(?P<kind>modeling|configuration)_(?P<model>[a-z0-9_]+))"
+    r"-at-(?P<revision>v[\w.-]+)\.py$"
+)
+VLLM_ARTIFACT = re.compile(
+    r"^vllm-.+-at-(?P<revision>v\d+(?:\.\d+)*)(?:\.(?:py|txt|sha256))?$"
+)
 CITATION = re.compile(r"\[([^\]\n]{0,220}\bpp?\.?\s*\d+[^\]\n]{0,180})\]", re.IGNORECASE)
 PAGE = re.compile(r"\bpp?\.?\s*(\d+)", re.IGNORECASE)
 CANONICAL_SOURCE = re.compile(r"^\s*PDF:([A-Za-z0-9._-]{1,128})(?=\s|$)", re.IGNORECASE)
@@ -142,6 +159,12 @@ def title_of(path: Path) -> str:
         if line.startswith("# "):
             return line[2:].strip()
     return path.stem.replace("-", " ").title()
+
+
+def route_nav_title(index: int, title: str) -> str:
+    """Prefix a route number once, stripping any number already in the title."""
+    clean_title = ROUTE_NUMBER_PREFIX.sub("", title.strip())
+    return f"{index:02d} · {clean_title}"
 
 
 def abstract_bullet(text: str, label: str) -> str:
@@ -429,7 +452,8 @@ def reading_card(card: dict[str, str], learning: dict | None = None) -> str:
         f'<p>{escaped["strategy"]}</p></div>'
         f'{route_html}'
         '<details class="paper-reading-card__details">'
-        '<summary><span>查看完整导读</span>'
+        '<summary><span class="paper-reading-card__details-icon" aria-hidden="true"></span>'
+        '<span>查看完整导读</span>'
         '<small>背景 · 遗留问题 · 团队 · 影响力 · 阅读方法</small></summary>'
         '<div class="paper-reading-card__details-body">'
         f'<div class="paper-reading-card__facts">{fact_html}</div>'
@@ -503,32 +527,91 @@ def relative_link(current: PurePosixPath, target: PurePosixPath) -> str:
     return os.path.relpath(str(target), str(current.parent)).replace(os.sep, "/")
 
 
+@lru_cache(maxsize=None)
+def source_upstream_urls(task_dir: Path) -> dict[str, str]:
+    """Load the public primary URL registered for each stable source ID."""
+    catalog = task_dir / "SOURCES.md"
+    if not catalog.is_file():
+        return {}
+    urls: dict[str, str] = {}
+    for line in catalog.read_text(encoding="utf-8").splitlines():
+        source_match = SOURCE_TABLE_ROW.match(line)
+        url_match = EXTERNAL_URL.search(line)
+        if source_match and url_match:
+            urls[source_match.group(1)] = url_match.group(0).rstrip(".,;:)")
+    return urls
+
+
+def source_external_url(source_id: str, urls: dict[str, str]) -> str | None:
+    """Resolve a source directory to its externally published primary source."""
+    if source_id in urls:
+        return urls[source_id]
+    source_without_version = re.sub(r"v\d+$", "", source_id)
+    if source_without_version in urls:
+        return urls[source_without_version]
+    arxiv_match = ARXIV_SOURCE_ID.fullmatch(source_id)
+    if arxiv_match:
+        return f"https://arxiv.org/abs/{arxiv_match.group(1)}{arxiv_match.group(2) or ''}"
+    return None
+
+
+def source_reference_url(shown: str, task_dir: Path) -> str | None:
+    """Resolve a local source-artifact reference without exposing its local inventory page."""
+    locator_match = SOURCE_LOCATION.fullmatch(shown)
+    if not locator_match:
+        return None
+    raw_path, start, end = locator_match.groups()
+    path = PurePosixPath(raw_path)
+    try:
+        sources_index = path.parts.index("sources")
+    except ValueError:
+        return None
+    if len(path.parts) <= sources_index + 1:
+        return None
+
+    # Transformer snapshots retain the upstream tag and Python module name in
+    # their artifact name, so they can point directly to the public source file.
+    artifact_match = TRANSFORMERS_ARTIFACT.fullmatch(path.name)
+    if artifact_match:
+        filename = artifact_match.group("filename")
+        model = artifact_match.group("model")
+        revision = artifact_match.group("revision")
+        url = (
+            "https://github.com/huggingface/transformers/blob/"
+            f"{revision}/src/transformers/models/{model}/{filename}.py"
+        )
+        if start:
+            url += f"#L{start}" + (f"-L{end}" if end else "")
+        return url
+
+    # vLLM artifact names include a fixed upstream release, but not the
+    # canonical repository path for every generated filename. The release tree
+    # remains a public, version-pinned source and is preferable to local notes.
+    vllm_match = VLLM_ARTIFACT.fullmatch(path.name)
+    if vllm_match:
+        return f"https://github.com/vllm-project/vllm/tree/{vllm_match.group('revision')}"
+
+    return source_external_url(path.parts[sources_index + 1], source_upstream_urls(task_dir))
+
+
 def linkify(text: str, current: PurePosixPath, task_dir: Path) -> str:
     def destination(shown: str) -> str | None:
-        raw_path = re.sub(r":\d+(?:--?\d+)?$", "", shown)
+        location_match = SOURCE_LOCATION.fullmatch(shown)
+        raw_path = location_match.group(1) if location_match else shown
         path = PurePosixPath(raw_path)
-        source = task_dir / path
-        if path.parts[0] == "papers" and source.is_file() and path.suffix == ".md":
-            target = path
-        elif path.parts[0] == "sources" and len(path.parts) >= 2:
-            source_id = path.parts[1]
-            if source.is_file() and source.suffix.lower() == ".pdf":
-                target = PurePosixPath("sources") / source_id / source.name
-            elif (task_dir / "sources" / source_id).exists():
-                target = PurePosixPath("sources") / source_id / "index.md"
-            else:
-                return None
-        elif (
-            path.parts[0] == "state"
-            and path.name.startswith("coverage-matrix-")
-            and source.is_file()
-            and path.suffix == ".md"
-        ):
+        normalized_parts = tuple(part for part in path.parts if part != "..")
+        normalized = PurePosixPath(*normalized_parts)
+        source = task_dir / normalized
+        if normalized.parts[0] == "papers" and source.is_file() and normalized.suffix == ".md":
+            target = normalized
+        elif "sources" in normalized.parts:
+            return source_reference_url(shown, task_dir)
+        elif normalized.parts[0] == "state" and normalized.name.startswith("coverage-matrix-") and source.is_file() and normalized.suffix == ".md":
             # State coverage matrices are task-local audit records.  Expose
             # them under the generated metadata section so links from the
             # report/status pages remain valid in the Reader copy.
-            target = PurePosixPath("meta") / path.name
-        elif path.as_posix().endswith("reader/reading-admission.yml") and READING_ADMISSION_PATH.is_file():
+            target = PurePosixPath("meta") / normalized.name
+        elif normalized.as_posix().endswith("reader/reading-admission.yml") and READING_ADMISSION_PATH.is_file():
             target = PurePosixPath("meta") / "reading-admission.md"
         else:
             return None
@@ -536,8 +619,9 @@ def linkify(text: str, current: PurePosixPath, task_dir: Path) -> str:
 
     def replace_backtick(match: re.Match[str]) -> str:
         shown = match.group(1)
-        target = destination(shown)
-        return f"[`{shown}`]({target})" if target else match.group(0)
+        locator = match.group(2) or ""
+        target = destination(shown + locator)
+        return f"[`{shown}`]({target}){locator}" if target else match.group(0)
 
     def replace_markdown(match: re.Match[str]) -> str:
         shown = match.group(1)
@@ -772,7 +856,7 @@ def write_summary(
         lines.append(f'    - 阶段 {stage_number} · {stage["name"]}')
         for item in stage["papers"]:
             lines.append(
-                f'        - [{item["overall_index"]:02d} · {item["title"]}]'
+                f'        - [{route_nav_title(item["overall_index"], item["title"])}]'
                 f'(papers/{item["file"]})'
             )
     if candidate_items:
@@ -876,7 +960,12 @@ def prepare(
     (docs_dir / "sources" / "catalog.md").write_text(catalog, encoding="utf-8")
 
     source_dirs = sorted(path for path in (task_dir / "sources").iterdir() if path.is_dir())
-    index_lines = ["# 原始来源索引", "", f"共 {len(source_dirs)} 个稳定来源目录。每页列出原始文件，并在存在时提供浏览器可读 PDF。", ""]
+    index_lines = [
+        "# 原始来源索引",
+        "",
+        f"共 {len(source_dirs)} 个稳定来源目录。链接统一指向可追溯的公开论文、仓库或官方页面。",
+        "",
+    ]
     for directory in source_dirs:
         destination = docs_dir / "sources" / directory.name / "index.md"
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -886,7 +975,11 @@ def prepare(
             include_pdfs=not virtual_site,
             artifact_store=artifact_store,
         )
-        index_lines.append(f"- [{directory.name}]({directory.name}/index.md)")
+        upstream = source_external_url(directory.name, source_upstream_urls(task_dir))
+        if upstream:
+            index_lines.append(f"- [{directory.name}]({upstream})")
+        else:
+            index_lines.append(f"- `{directory.name}`（未登记公开上游地址）")
     (docs_dir / "sources" / "index.md").write_text("\n".join(index_lines) + "\n", encoding="utf-8")
 
     for source_name, target_name, title in (

@@ -7,6 +7,7 @@ import json
 import sqlite3
 import sys
 import tempfile
+import threading
 from pathlib import Path
 
 
@@ -142,6 +143,135 @@ def check_runtime_state_helpers() -> None:
         assert state.delete_runtime(path)
         assert not state.runtime_exists(path)
 
+
+def check_reading_progress() -> None:
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        task = root / "tasks" / "task-a"
+        (task / "papers").mkdir(parents=True)
+        (task / "papers" / "paper.md").write_text("# Paper\n\n正文\n", encoding="utf-8")
+        source = task / "sources" / "source-a"
+        source.mkdir(parents=True)
+        (source / "paper.pdf").write_bytes(b"%PDF-1.7\nplaceholder\n")
+
+        state = reader_server.ReaderState.__new__(reader_server.ReaderState)
+        state.task_dir = task
+        state.user_dir = root / "user-data"
+        state.user_dir.mkdir()
+        state.runtime_store = RuntimeStore(state.user_dir / "state.sqlite3")
+        state.site_manifest = {
+            "documents": {
+                "papers/paper.md": {
+                    "sha256": "document-sha-a",
+                    "blocks": {"b00001": "正文"},
+                }
+            }
+        }
+        state.lock = threading.RLock()
+        state.source_metadata = lambda source_id: {
+            "source_id": source_id,
+            "pdf_sha256": "pdf-sha-a",
+            "page_count": 3,
+        }
+
+        initial = state.get_reading_progress(document_id="papers/paper.md")
+        assert initial["checkpoint"] is None
+        assert initial["resume_position"] is None
+        assert initial["note"] is None
+
+        position = {
+            "block_id": "b00001",
+            "heading_id": "method",
+            "heading_title": "方法",
+            "section_index": 1,
+            "offset_ratio": 0.4,
+            "scroll_ratio": 0.52,
+            "text_hint": "正文",
+        }
+        saved = state.save_reading_progress({
+            "kind": "document",
+            "action": "checkpoint",
+            "document_id": "papers/paper.md",
+            "document_sha256": "document-sha-a",
+            "position": position,
+        })
+        assert saved["checkpoint"]["block_id"] == "b00001"
+        assert saved["checkpoint"]["offset_ratio"] == 0.4
+        assert saved["checkpoint"]["updated_at"]
+        assert saved["resume_position"]["scroll_ratio"] == 0.52
+
+        furthest = state.save_reading_progress({
+            "kind": "document",
+            "action": "checkpoint",
+            "document_id": "papers/paper.md",
+            "document_sha256": "document-sha-a",
+            "position": {**position, "scroll_ratio": 0.72, "offset_ratio": 0.2},
+        })
+        furthest_timestamp = furthest["checkpoint"]["updated_at"]
+        assert furthest["checkpoint"]["scroll_ratio"] == 0.72
+
+        after_backtrack = state.save_reading_progress({
+            "kind": "document",
+            "action": "checkpoint",
+            "document_id": "papers/paper.md",
+            "document_sha256": "document-sha-a",
+            "position": {**position, "scroll_ratio": 0.31, "offset_ratio": 0.9},
+        })
+        assert after_backtrack["checkpoint"]["scroll_ratio"] == 0.72
+        assert after_backtrack["checkpoint"]["updated_at"] == furthest_timestamp
+
+        manually_positioned = state.save_reading_progress({
+            "kind": "document",
+            "action": "set_position",
+            "document_id": "papers/paper.md",
+            "document_sha256": "document-sha-a",
+            "position": {**position, "scroll_ratio": 0.31, "offset_ratio": 0.9},
+        })
+        assert manually_positioned["checkpoint"]["scroll_ratio"] == 0.72
+        assert manually_positioned["resume_position"]["scroll_ratio"] == 0.31
+
+        noted = state.save_reading_progress({
+            "kind": "document",
+            "action": "note",
+            "document_id": "papers/paper.md",
+            "document_sha256": "document-sha-a",
+            "text": "这里需要回看定义。",
+            "position": position,
+        })
+        assert noted["note"]["text"] == "这里需要回看定义。"
+        assert noted["note"]["position"]["heading_id"] == "method"
+
+        deleted = state.save_reading_progress({
+            "kind": "document",
+            "action": "delete_note",
+            "document_id": "papers/paper.md",
+            "document_sha256": "document-sha-a",
+        })
+        assert deleted["note"] is None
+
+        try:
+            state.save_reading_progress({
+                "kind": "document",
+                "action": "checkpoint",
+                "document_id": "papers/paper.md",
+                "document_sha256": "document-sha-a",
+                "position": {**position, "block_id": "missing"},
+            })
+            raise AssertionError("invalid reading block accepted")
+        except reader_server.ApiError as error:
+            assert error.status == 400
+
+        try:
+            state.save_reading_progress({
+                "kind": "document",
+                "action": "checkpoint",
+                "document_id": "papers/paper.md",
+                "document_sha256": "old-sha",
+                "position": position,
+            })
+            raise AssertionError("stale document checkpoint accepted")
+        except reader_server.ApiError as error:
+            assert error.status == 409
 
 def check_task_artifact_store() -> None:
     with tempfile.TemporaryDirectory() as temporary:
@@ -309,6 +439,7 @@ def main() -> None:
     check_legacy_history_migration()
     check_runtime_store()
     check_runtime_state_helpers()
+    check_reading_progress()
     check_task_artifact_store()
     check_site_store()
     check_site_fingerprint()

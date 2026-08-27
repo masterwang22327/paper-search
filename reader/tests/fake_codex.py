@@ -111,6 +111,18 @@ elif schema_name == "translation-page.schema.json":
         },
         ensure_ascii=False,
     )
+elif schema_name == "document-revision.schema.json":
+    answer = json.dumps(
+        {
+            "title": "并行能力的适用范围",
+            "summary": "训练阶段可并行处理已知序列位置，但自回归生成仍受前序 token 依赖限制。",
+            "markdown": r"Transformer 的并行优势主要体现在训练阶段。自回归生成时，第 \(t\) 个 token 仍依赖此前输出，因此不能把训练并行直接等同于生成并行。",
+            "diagram": None,
+            "visual_html": None,
+            "change_note": "补充了训练与生成阶段的边界，避免原结论被过度概括。",
+        },
+        ensure_ascii=False,
+    )
 else:
     answer = "这是 fake Codex 的测试回答，已验证正文选区与固定 PDF 上下文。"
 

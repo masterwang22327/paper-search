@@ -19,7 +19,7 @@ stages:
       - file: modern-transformer-block.md
         bridge: "Transformer 骨架已经清楚后，先用论文角色地图区分共同基线、机制论文、现代配方与前沿选读；再沿跨层优化、局部变换、位置表达和历史状态四条路径追踪旧问题、改动对象、不变量与新代价，最后回到 GQA、Llama 3.1、Mistral 和 DeepSeek-V2 的组合关系。"
       - file: decoding.md
-        bridge: "上一篇停在 logits 与下一词元概率；本篇固定模型权重，只研究温度、过滤、搜索、采样与停止规则怎样把概率变成文本，并用模型/解码/评测三层检查点结束阶段 1。"
+        bridge: "上一篇停在 logits 与下一词元概率；本篇固定权重，沿单步截断、序列重评分、grammar/runtime 支持集、多候选聚合和推测执行追踪完整生成系统，并用五层 generation contract 结束阶段 1。"
 
   - name: "预训练、数据、规模与评测地基"
     route_type: "主干"
@@ -29,13 +29,13 @@ stages:
     checkpoint: "看到一个新模型分数时，能否先问清 checkpoint、tokenizer、训练 token、prompt/decode/parser/judge 和比较分母？"
     papers:
       - file: tokenization-data-curation.md
-        bridge: "进入预训练论文前先固定模型真正看见的离散单位：字符经过 Unicode/UTF-8、切分、特殊 token、去重和 packing 后才成为训练样本；同一原文可以被不同 tokenizer 改写成不同长度和边界。"
+        bridge: "阶段 1 已从 token ID 走到 logits 和解码；本篇回到入口补齐 tokenizer：先区分 tokenizer 统计训练与 causal LM 梯度训练，再亲手走一遍 raw text -> normalization -> BPE/Unigram piece -> ID -> embedding row，并用 GPT/LLaMA/Qwen 理解词表、special token 和 checkpoint ABI。数据筛选、packing 与 mask 只保留为接口边界。"
       - file: arxiv-1810.04805.md
-        bridge: "token 与数据边界明确后，用 BERT、XLNet、ELECTRA 对照三条 encoder 监督路径：selected-token MLM、permutation target-aware AR 与 all-position RTD；重点区分输入顺序、预测位置和标签来源。"
+        bridge: "08 已固定 text -> token IDs -> causal decoder -> logits；09 保持 tokenizer/embedding 不变，只改变 Transformer 可见性和 label：先按生成 vs 分类/检索/重排选择 causal decoder 或 bidirectional encoder，再用同一个‘北京’位置理解 BERT 为什么必须扰动答案、ELECTRA 为什么改成全位置来源判断。XLNet/SpanBERT 第二遍读。"
       - file: arxiv-1910.10683.md
-        bridge: "encoder-only 三条路径之后，先用 BART 把双向 source encoder 接到 causal decoder，并用完整原文重建提供生成接口；再用 T5 把 target 缩成缺失 spans、把所有下游任务统一为 text-to-text。"
+        bridge: "09 已把 causal decoder 的生成接口与 bidirectional encoder 的表示接口分开；10 解决二者之间的结构缺口：source 用 encoder 双向读取，target 用 decoder 左到右生成。第一遍只比较 BART 全文重建与 T5 缺失-span短 target；UniLM/UL2 留到第二遍。"
       - file: arxiv-2005.14165.md
-        bridge: "有了目标与数据账本，再看 GPT-3 如何通过扩大 causal LM 训练获得 in-context learning 现象。"
+        bridge: "09/10 比较了为任务选择 encoder、encoder-decoder、目标与 fine-tuning；11 先沿 GPT-1 的任务微调、GPT-2 的零样本文本接口走到 GPT-3 的系统 few-shot 规模实验，再用 GPT-4 的披露边界追问：任务信息何时从梯度迁入 context，能力证据与机制透明度是否同步增长。"
       - file: scaling-kaplan-chinchilla.md
         bridge: "GPT-3 展示规模现象，本篇把参数、token 与算力之间的经验关系变成可计算的预算问题。"
       - file: arxiv-2204.02311.md
@@ -62,6 +62,8 @@ stages:
         bridge: "分布式状态与数值路径都能单独核对后，让 8 个 token 经过一次 top-1 路由：追踪 router、expert、capacity overflow、residual 与 all-to-all，分清总容量、单 token 计算和通信三本账。"
       - file: moe-routing-load-balancing.md
         bridge: "Switch 已建立 token-choice、capacity 与辅助损失；本篇固定同一 4-token score matrix，先比较 router gradient、expert bucket 和跨步 bias controller，再把现代模型谱系与专业化证据留到第二遍。"
+      - file: moe-expert-upcycling-granularity.md
+        bridge: "路由和均衡的控制时钟已经明确后，把 Qwen3-Coder 的 `128/Top-8/768` 变成 `256/Top-16/384` 与 `256/Top-8/768` 两条 matched 路线：先核对父组函数保持、权重缩放和 `T*K/N` 数据暴露，再决定是否值得继续 CPT、蒸馏和 SFT。"
       - file: mixture-of-depths.md
         bridge: "MoE 已让 token 在同一层选择 FFN；本篇改为选择整块深度，用 4 个 token 区分 MoD 跳过后重入、LayerSkip 后缀终止和 MoR 共享层递归，并核对各自 K/V 与服务时钟。"
       - file: arxiv-2106.09685.md

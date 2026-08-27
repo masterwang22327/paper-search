@@ -508,6 +508,7 @@ body {
 }
 
 .translation-block {
+  min-width: 0;
   margin: 0 0 1.15rem;
   padding: 0.15rem 0.2rem 1rem;
   border: 0;
@@ -595,9 +596,11 @@ body {
 }
 
 .translation-structure {
+  min-width: 0;
   margin-top: 0.9rem;
   font-size: 0.84rem;
   line-height: 1.72;
+  overflow-wrap: anywhere;
 }
 
 .translation-structure__section {
@@ -664,18 +667,35 @@ body {
 
 .translation-figure-labels {
   display: grid;
-  grid-template-columns: minmax(5rem, auto) minmax(0, 1fr);
+  min-width: 0;
+  grid-template-columns: minmax(5rem, 38%) minmax(0, 1fr);
   gap: 0.2rem 0.6rem;
 }
 
 .translation-figure-labels dt {
+  min-width: 0;
   color: #555;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.68rem;
+  overflow-wrap: anywhere;
 }
 
 .translation-figure-labels dd {
+  min-width: 0;
   margin: 0;
+  overflow-wrap: anywhere;
+}
+
+@container translation-panel (max-width: 24rem) {
+  .translation-figure-labels {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.1rem;
+  }
+
+  .translation-figure-labels dt {
+    margin-top: 0.25rem;
+    font-weight: 650;
+  }
 }
 
 .translation-structure__notes {
@@ -741,6 +761,7 @@ body {
   /* Auto margins center a narrow page but collapse for an oversized page,
      keeping its left edge inside the native horizontal scroll range. */
   margin-inline: auto;
+  overflow: clip;
   background: #fff;
   box-shadow: 0 2px 12px rgb(0 0 0 / 45%);
 }
@@ -748,6 +769,7 @@ body {
 .pdf-block-overlay {
   position: absolute;
   inset: 0;
+  overflow: hidden;
   pointer-events: none;
 }
 
@@ -985,84 +1007,4 @@ body {
     border-color: #545b87;
     background: #30365c;
   }
-}
-
-@media (max-width: 52rem) {
-  .zoom-label {
-    display: none;
-  }
-
-  .toolbar {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 0.2rem;
-    padding-inline: 0.35rem;
-  }
-
-  .toolbar > .divider,
-  .toolbar-spacer {
-    display: none;
-  }
-
-  .page-tools {
-    grid-column: 1;
-    grid-row: 1;
-  }
-
-  #open-original {
-    grid-column: 2;
-    grid-row: 1;
-  }
-
-  .zoom-tools {
-    grid-column: 1;
-    grid-row: 2;
-  }
-
-  .translation-tools {
-    grid-column: 2;
-    grid-row: 2;
-  }
-
-  .toolbar button,
-  .toolbar a {
-    padding-inline: 0.35rem;
-  }
-
-  .toolbar .translation-action {
-    min-width: auto;
-  }
-
-  .translation-panel {
-    width: var(--translation-panel-width, 46%);
-    min-width: min(18rem, 38%);
-  }
-
-  .translation-header {
-    align-items: center;
-    flex-direction: row;
-    gap: 0.4rem;
-  }
-
-  .translation-header-actions {
-    width: auto;
-    justify-content: flex-end;
-  }
-
-  .full-translation-progress {
-    margin-left: 0;
-  }
-
-  .retranslation-controls button {
-    margin-left: 0;
-  }
-
-  #close-translation {
-    margin-left: auto;
-  }
-
-  .translation-content {
-    padding: 1.1rem 0.95rem 3rem;
-  }
-
 }

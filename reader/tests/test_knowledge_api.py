@@ -27,7 +27,10 @@ import server as reader_server
 
 
 def check_translation_api_key_policy() -> None:
-    assert reader_server.DEFAULT_TRANSLATION_API_URL == "https://www.sevnx.one/v1/responses"
+    assert reader_server.DEFAULT_TRANSLATION_MODEL == "gpt-5.6-terra"
+    assert reader_server.DEFAULT_TRANSLATION_REASONING_EFFORT == "medium"
+    assert reader_server.DEFAULT_RETRANSLATION_MODEL == "gpt-5.6-sol"
+    assert reader_server.DEFAULT_RETRANSLATION_REASONING_EFFORT == "high"
 
     with mock.patch.dict(
         os.environ,
@@ -46,8 +49,8 @@ def check_translation_api_key_policy() -> None:
             "https://relay.example/v1/responses"
         ) is None
         assert reader_server.ReaderState.load_translation_api_key(
-            "https://api.openai.com/v1/responses"
-        ) == "openai-test-key"
+            "https://unconfigured.example/v1/responses"
+        ) is None
 
     with tempfile.TemporaryDirectory() as temporary:
         codex_home = Path(temporary)
@@ -58,12 +61,23 @@ def check_translation_api_key_policy() -> None:
         (codex_home / "config.toml").write_text(
             'model_provider = "Relay"\n\n'
             '[model_providers.Relay]\n'
-            'base_url = "https://relay.example/v1"\n',
+            'base_url = "https://relay.example/v1/"\n'
+            'wire_api = "responses"\n'
+            'requires_openai_auth = true\n',
             encoding="utf-8",
         )
         with mock.patch.dict(os.environ, {"CODEX_HOME": str(codex_home)}, clear=True):
+            assert reader_server.ReaderState.default_responses_api_url() == (
+                "https://relay.example/v1/responses"
+            )
+            assert reader_server.ReaderState.load_translation_api_url() == (
+                "https://relay.example/v1/responses"
+            )
             assert reader_server.ReaderState.load_translation_api_key(
                 "https://relay.example/v1/responses"
+            ) == "codex-provider-key"
+            assert reader_server.ReaderState.load_translation_api_key(
+                "https://relay.example/v1/responses/"
             ) == "codex-provider-key"
             assert reader_server.ReaderState.load_translation_api_key(
                 "https://other.example/v1/responses"
@@ -71,16 +85,75 @@ def check_translation_api_key_policy() -> None:
             assert reader_server.ReaderState.load_translation_api_key(
                 "https://relay.example/v2/responses"
             ) is None
+            assert reader_server.ReaderState.load_translation_api_key(
+                "https://relay.example/v1/responses?target=other"
+            ) is None
+            assert reader_server.ReaderState.load_translation_api_key(
+                "https://relay.example/v1/responses#other"
+            ) is None
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "CODEX_HOME": str(codex_home),
+                "READER_TRANSLATION_API_URL": "https://override.example/v1/responses",
+            },
+            clear=True,
+        ):
+            assert reader_server.ReaderState.load_translation_api_url() == (
+                "https://override.example/v1/responses"
+            )
 
         (codex_home / "config.toml").write_text(
-            'model_provider = "OpenAI"\n\n'
-            '[model_providers.OpenAI]\n'
-            'base_url = "https://www.sevnx.one/v1"\n',
+            'model_provider = "Relay"\n\n'
+            '[model_providers.Relay]\n'
+            'base_url = "https://relay.example/v1"\n'
+            'wire_api = "chat"\n'
+            'requires_openai_auth = true\n',
+            encoding="utf-8",
+        )
+        with mock.patch.dict(os.environ, {"CODEX_HOME": str(codex_home)}, clear=True):
+            assert reader_server.ReaderState.default_responses_api_url() is None
+            assert reader_server.ReaderState.load_translation_api_url() is None
+
+        (codex_home / "config.toml").write_text(
+            'model_provider = "Relay"\n\n'
+            '[model_providers.Relay]\n'
+            'wire_api = "responses"\n',
+            encoding="utf-8",
+        )
+        with mock.patch.dict(os.environ, {"CODEX_HOME": str(codex_home)}, clear=True):
+            assert reader_server.ReaderState.default_responses_api_url() is None
+            assert reader_server.ReaderState.load_translation_api_url() is None
+
+        (codex_home / "config.toml").write_text(
+            'model_provider = "Relay"\n\n'
+            '[model_providers.Relay]\n'
+            'base_url = "https://relay.example/v1"\n'
+            'wire_api = "responses"\n'
+            'env_key = "RELAY_API_KEY"\n',
+            encoding="utf-8",
+        )
+        with mock.patch.dict(
+            os.environ,
+            {"CODEX_HOME": str(codex_home), "RELAY_API_KEY": "provider-env-key"},
+            clear=True,
+        ):
+            assert reader_server.ReaderState.load_translation_api_key(
+                "https://relay.example/v1/responses"
+            ) == "provider-env-key"
+
+        (codex_home / "config.toml").write_text(
+            'model_provider = "Current"\n\n'
+            '[model_providers.Current]\n'
+            'base_url = "https://current.example/v1"\n'
+            'wire_api = "responses"\n'
+            'requires_openai_auth = true\n',
             encoding="utf-8",
         )
         with mock.patch.dict(os.environ, {"CODEX_HOME": str(codex_home)}, clear=True):
             assert reader_server.ReaderState.load_translation_api_key(
-                reader_server.DEFAULT_TRANSLATION_API_URL
+                "https://current.example/v1/responses"
             ) == "codex-provider-key"
 
 
@@ -100,6 +173,8 @@ def check_codex_error_messages() -> None:
 
 
 def check_full_translation_terminal_state() -> None:
+    assert reader_server.FULL_TRANSLATION_CONCURRENCY == 16
+
     class FakeResponse:
         def __init__(self) -> None:
             self.closed = False
@@ -262,6 +337,59 @@ def check_retranslation_compact_fallback() -> None:
         assert len(calls) == 1
 
 
+def check_translation_json_recovery() -> None:
+    answer = {
+        "translation": "这是一个有效译文。",
+        "blocks": [],
+        "glossary_updates": [],
+        "warnings": [],
+    }
+    encoded = json.dumps(answer, ensure_ascii=False)
+    assert reader_server.ReaderState.parse_translation_json(encoded) == answer
+    assert reader_server.ReaderState.parse_translation_json(
+        f"```json\n{encoded}\n```"
+    ) == answer
+    assert reader_server.ReaderState.parse_translation_json(
+        f"下面是结果：\n{encoded}\n以上。"
+    ) == answer
+    try:
+        reader_server.ReaderState.parse_translation_json("{\"translation\": \"截断")
+        raise AssertionError("malformed JSON was accepted")
+    except reader_server.ApiError as error:
+        assert error.status == 502
+
+    state = reader_server.ReaderState.__new__(reader_server.ReaderState)
+    normalized = state.validate_translation_result(
+        {
+            "translation": "图示说明。",
+            "blocks": [
+                {
+                    "type": "caption",
+                    "original_text": "Figure 2",
+                    "translation": "图 2",
+                    "confidence": "high",
+                    "bbox": None,
+                    "refs": [],
+                    "table_data": None,
+                    "figure_data": {
+                        "kind": "diagram",
+                        "summary": "束搜索流程。",
+                        "labels": [],
+                        "flow_steps": ["保留候选。"],
+                        "notes": [],
+                    },
+                }
+            ],
+            "glossary_updates": [],
+            "warnings": [],
+        },
+        "Figure 2",
+        2,
+    )
+    assert normalized["blocks"][0]["type"] == "figure"
+    assert any("规范为图片块" in warning for warning in normalized["warnings"])
+
+
 def free_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -295,6 +423,7 @@ def run() -> None:
     check_codex_error_messages()
     check_full_translation_terminal_state()
     check_retranslation_compact_fallback()
+    check_translation_json_recovery()
     site_database = READER_DIR / "user-data" / TASK_ID / "site.sqlite3"
     site_store = reader_server.SiteStore(site_database, READER_DIR.parent)
     manifest = site_store.load_json("context-manifest.json", {})
@@ -487,6 +616,27 @@ def run() -> None:
             assert not delayed_thread.is_alive()
             assert not delayed_errors, delayed_errors
             assert delayed_result["thread_id"] == created["active_thread_id"]
+
+            revision_discussion = request(
+                f"{origin}/api/revision/propose",
+                "POST",
+                {
+                    "document_id": document_id,
+                    "document_sha256": document["sha256"],
+                    "contexts": payload["contexts"],
+                    "instruction": "补充训练并行与自回归生成串行之间的边界",
+                    "pdf_contexts": [],
+                    "model": "gpt-5.6-sol",
+                    "effort": "xhigh",
+                },
+                token,
+            )
+            revision_candidate = revision_discussion["turns"][-1]["candidate"]
+            assert revision_candidate["backend"] == "codex-cli"
+            assert revision_candidate["response_id"] is None
+            assert revision_candidate["codex_session_id"] is None
+            assert "kind" not in revision_candidate
+            assert "自回归生成" in revision_candidate["markdown"]
 
             old_state = request(
                 f"{origin}/api/state?document_id={urllib.parse.quote(document_id)}&thread_id={first['thread_id']}"
@@ -717,10 +867,15 @@ def run() -> None:
                 for call in calls
                 for argument in call["args"]
             )
+            assert 'network_access="enabled"' in calls[0]["args"]
             assert selected in calls[0]["prompt"]
             assert "Figure 1: The Transformer" not in calls[0]["prompt"]
             assert "Attention Is All You Need" in calls[0]["prompt"]
             assert "arxiv-1706.03762v7" in calls[0]["prompt"]
+            assert "允许并应主动使用可用的联网、搜索、浏览器和 MCP 工具" in calls[0]["prompt"]
+            assert "回答长度、技术深度和结构按问题难度" in calls[0]["prompt"]
+            assert "不要修改文件、联网或启动未知脚本" not in calls[0]["prompt"]
+            assert "只能依据任务目录中的原始调研 Markdown" not in calls[0]["prompt"]
             assert "bdfaa68d8984f0dc02beaca527b76f207d99b666d31d1da728ee0728182df697" in calls[0]["prompt"]
             assert '"attached_physical_page": 3' in calls[0]["prompt"]
             assert '"attached_physical_page": 4' in calls[0]["prompt"]
@@ -737,12 +892,22 @@ def run() -> None:
                 "gpt-5.6-sol",
                 "gpt-5.6-sol",
                 "gpt-5.6-sol",
+                "gpt-5.6-sol",
             ]
-            expected_efforts = ["ultra", "xhigh", "xhigh", "xhigh"]
+            expected_efforts = ["ultra", "xhigh", "xhigh", "xhigh", "xhigh"]
             assert all(
                 f'model_reasoning_effort="{effort}"' in call["args"]
                 for call, effort in zip(calls, expected_efforts, strict=True)
             )
+            revision_calls = [
+                call for call in calls
+                if "document-revision.schema.json" in " ".join(call["args"])
+            ]
+            assert len(revision_calls) == 1
+            assert "--ephemeral" in revision_calls[0]["args"]
+            assert "resume" not in revision_calls[0]["args"]
+            assert "候选正文修订器" in revision_calls[0]["prompt"]
+            assert "补充训练并行与自回归生成串行之间的边界" in revision_calls[0]["prompt"]
             assert not any("translation-page.schema.json" in " ".join(call["args"]) for call in calls)
             responses_calls = [json.loads(line) for line in responses_log.read_text().splitlines()]
             assert len(responses_calls) == 4

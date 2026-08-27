@@ -3,7 +3,7 @@
 # not receive a canonical reading-card/route position until a human admission
 # decision is recorded.
 version: 1
-canonical_count: 66
+canonical_count: 67
 candidates:
   - file: agentic-rl-next-directions.md
     reason: "方向发现页；它汇总候选问题，但不是一篇完成来源准入的精读。"

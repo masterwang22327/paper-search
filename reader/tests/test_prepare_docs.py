@@ -46,8 +46,15 @@ def run() -> None:
         titles,
         admitted_files=admitted,
     )
-    assert len(production_papers) == 69
-    assert len(admitted) == len(route) == len(explicit_cards) == 66
+    assert (
+        prepare_docs.route_nav_title(9, "09 · 从 Causal LLM 到 BERT")
+        == "09 · 从 Causal LLM 到 BERT"
+    )
+    assert prepare_docs.route_nav_title(9, "09 · 09 · 从 Causal LLM 到 BERT") == "09 · 从 Causal LLM 到 BERT"
+    assert prepare_docs.route_nav_title(10, "10 · 从 BERT 到 T5") == "10 · 从 BERT 到 T5"
+    assert prepare_docs.route_nav_title(11, "GPT-3：上下文学习") == "11 · GPT-3：上下文学习"
+    assert len(production_papers) == 70
+    assert len(admitted) == len(route) == len(explicit_cards) == 67
     assert len(cards) == len(production_papers)
     assert set(candidates) == {
         "agentic-rl-next-directions.md",
@@ -56,7 +63,7 @@ def run() -> None:
     }
     assert "evaluator-judge-validity-cua.md" in admitted
     assert "async-staleness-rolloutpipe.md" in admitted
-    assert sum(len(stage["papers"]) for stage in stages) == 66
+    assert sum(len(stage["papers"]) for stage in stages) == 67
     positions = {filename: context["overall_index"] for filename, context in route.items()}
     assert positions["pretransformer-gpt-lineage.md"] < positions["contextual-representations-finetuning.md"]
     assert positions["tokenization-data-curation.md"] < positions["arxiv-1810.04805.md"]
@@ -85,7 +92,26 @@ def run() -> None:
     assert 'href="papers/' not in guide_route
 
     with tempfile.TemporaryDirectory() as temporary:
+        summary_dir = Path(temporary)
+        prepare_docs.write_summary(summary_dir, stages)
+        summary = (summary_dir / "SUMMARY.md").read_text(encoding="utf-8")
+        assert "09 · 09 ·" not in summary
+        assert "10 · 10 ·" not in summary
+        assert "09 · 从 Causal LLM 到 BERT" in summary
+        assert "10 · 从 BERT 到 T5" in summary
+
+    with tempfile.TemporaryDirectory() as temporary:
         task = Path(temporary)
+        (task / "SOURCES.md").write_text(
+            "| source | publication | provenance | upstream | retrieved | evidence | local | use |\n"
+            "| --- | --- | --- | --- | --- | --- | --- | --- |\n"
+            "| `qwen3-next-80b-a3b-instruct-at-9c7f2fbe` | model | repository | "
+            "https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct/tree/9c7f2fbe "
+            "| today | test | test | test |\n"
+            "| `framework-hf-peft` | code | repository | https://github.com/huggingface/peft "
+            "| today | test | test | test |\n",
+            encoding="utf-8",
+        )
         for source in ("arxiv-1706.03762v7", "arxiv-1810.04805v2"):
             directory = task / "sources" / source
             directory.mkdir(parents=True)
@@ -138,6 +164,54 @@ def run() -> None:
             PurePosixPath("meta/coverage-matrix-20260802.md"),
             task,
         ) == "[准入](reading-admission.md)"
+        transformer_reference = (
+            "`sources/qwen3-next-80b-a3b-instruct-at-9c7f2fbe/"
+            "transformers-modeling_qwen3_next-at-v4.57.0.py`:330--399"
+        )
+        assert prepare_docs.linkify(
+            transformer_reference, PurePosixPath("papers/example.md"), task
+        ) == (
+            "[`sources/qwen3-next-80b-a3b-instruct-at-9c7f2fbe/"
+            "transformers-modeling_qwen3_next-at-v4.57.0.py`]"
+            "(https://github.com/huggingface/transformers/blob/v4.57.0/"
+            "src/transformers/models/qwen3_next/modeling_qwen3_next.py#L330-L399):330--399"
+        )
+        assert prepare_docs.linkify(
+            "`sources/framework-hf-peft/lora_config.py`:398",
+            PurePosixPath("papers/example.md"),
+            task,
+        ) == (
+            "[`sources/framework-hf-peft/lora_config.py`]"
+            "(https://github.com/huggingface/peft):398"
+        )
+        assert prepare_docs.linkify(
+            "`sources/qwen3-next-80b-a3b-instruct-at-9c7f2fbe/"
+            "vllm-qwen3_next-at-v0.10.2.py`:100--125",
+            PurePosixPath("papers/example.md"),
+            task,
+        ) == (
+            "[`sources/qwen3-next-80b-a3b-instruct-at-9c7f2fbe/"
+            "vllm-qwen3_next-at-v0.10.2.py`]"
+            "(https://github.com/vllm-project/vllm/tree/v0.10.2):100--125"
+        )
+        assert prepare_docs.linkify(
+            "`sources/arxiv-9999.12345v2/evidence.md`",
+            PurePosixPath("papers/example.md"),
+            task,
+        ) == "[`sources/arxiv-9999.12345v2/evidence.md`](https://arxiv.org/abs/9999.12345v2)"
+        assert prepare_docs.linkify(
+            "`sources/unregistered/evidence.md`", PurePosixPath("papers/example.md"), task
+        ) == "`sources/unregistered/evidence.md`"
+        assert prepare_docs.linkify(
+            "[来源](../sources/framework-hf-peft/index.md)",
+            PurePosixPath("papers/example.md"),
+            task,
+        ) == "[来源](https://github.com/huggingface/peft)"
+        assert prepare_docs.linkify(
+            "[`sources/framework-hf-peft/`](../sources/framework-hf-peft/index.md)",
+            PurePosixPath("papers/example.md"),
+            task,
+        ) == "[`sources/framework-hf-peft/`](https://github.com/huggingface/peft)"
 
         with_card = prepare_docs.inject_reading_card("# 标题\n\n正文\n", reading_card())
         assert with_card.startswith('# 标题\n\n<section class="paper-reading-card"')

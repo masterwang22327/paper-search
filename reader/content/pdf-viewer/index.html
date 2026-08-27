@@ -2,9 +2,8 @@
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>论文 PDF</title>
-    <link rel="stylesheet" href="viewer.css?v=20260805-4">
+    <link rel="stylesheet" href="viewer.css?v=20260826-1">
   </head>
   <body>
     <header class="toolbar" aria-label="PDF 工具栏">
@@ -13,7 +12,7 @@
         <label class="page-control">
           <span class="visually-hidden">当前页</span>
           <span aria-hidden="true">第</span>
-          <input id="page-number" type="number" min="1" value="1" inputmode="numeric">
+          <input id="page-number" type="number" min="1" value="1">
           <span>/ <span id="page-count">-</span> 页</span>
         </label>
         <button id="next" class="page-step" type="button" title="下一页" aria-label="下一页">→</button>
@@ -91,6 +90,6 @@
         </div>
       </section>
     </div>
-    <script type="module" src="viewer.mjs"></script>
+    <script type="module" src="viewer.mjs?v=20260826-1"></script>
   </body>
 </html>
