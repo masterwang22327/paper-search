@@ -58,7 +58,7 @@ def run() -> None:
         path.stem
         for path in (READER_DIR.parent / "tasks" / TASK_ID / "papers").glob("*.md")
     )
-    assert len(paper_routes) == 70, paper_routes
+    assert len(paper_routes) == 81, paper_routes
     for filename in (
         "preln-postln-icml2020-fig1.png",
         "gqa-head-sharing-emnlp2023-fig2.png",
@@ -122,10 +122,36 @@ def run() -> None:
 \\text{logits}=hE^\\top
 \\]
 
+标准 causal mask 为：
+
+\\[
+S_i=\\{j\\mid j\\le i\\}
+\\]
+
+注意力复杂度为 \\(O(n^2)\\)，稀疏化后是 \\(O(n\\sqrt n)\\)。
+
+$$
+x_j \\longrightarrow x_k \\longrightarrow x_i
+$$
+
+\\[
+c_i^{KV}=W_D^{KV}h_i,\\qquad k_i^C=W_U^Kc_i^{KV}
+\\]
+
+<img src=x onerror="window.__markdownInjected=true">
+
+${"```"}reader-diagram JSON
+{"title":"公式信息流","caption":"兼容旧围栏格式","nodes":[{"id":"input","label":"输入","detail":"token states"},{"id":"output","label":"输出","detail":"attention result"}],"edges":[{"from":"input","to":"output","label":"attention"}]}
+${"```"}
+
 ` + Array.from(
                         {length: 80},
                         (_, index) => `第 ${index + 1} 节用于模拟真实的长篇模型回复，确保切换标签后直接显示回答开头。`
                       ).join("\\n\\n")
+                    ,
+                      visual_html: `<style>button{padding:8px 12px} output{margin-left:8px}</style>
+<button id="history-visual-button" type="button">增加</button><output id="history-visual-value">0</output>
+<script>try{parent.document.body.dataset.visualEscaped="true"}catch(e){}historyVisualButton=document.getElementById("history-visual-button");historyVisualValue=document.getElementById("history-visual-value");historyVisualButton.addEventListener("click",()=>historyVisualValue.textContent=String(Number(historyVisualValue.textContent)+1))<\\/script>`
                     }],
                     faq: {items: [{
                       id: "faq-test",
@@ -213,7 +239,8 @@ def run() -> None:
                         note: request.note,
                         source_message_id: request.message_id,
                         knowledge_type: "mixed",
-                        evidence: [{source_id: "arxiv-1706.03762v7", page: 7}]
+                        evidence: [{source_id: "arxiv-1706.03762v7", page: 7}],
+                        visual_html: window.__faqTestState.messages.find(message => message.id === request.message_id)?.visual_html || null
                       }]};
                       return json(window.__faqTestState.faq);
                     }
@@ -239,7 +266,8 @@ def run() -> None:
                       const assistant = {
                         id: "asked-assistant",
                         role: "assistant",
-                        content: String.raw`模拟回答完成。因此，这个结果的 policy 学习率就是 \\(1e\\!-\\!4\\)，而不是 LoRA 的 \\(5e\\!-\\!4\\)。`
+                        content: String.raw`模拟回答完成。因此，这个结果的 policy 学习率就是 \\(1e\\!-\\!4\\)，而不是 LoRA 的 \\(5e\\!-\\!4\\)。`,
+                        visual_html: `<button id="asked-visual-button" type="button">切换曲线</button><output id="asked-visual-value">关闭</output><script>try{parent.document.body.dataset.visualEscaped="true"}catch(e){}askedVisualButton=document.getElementById("asked-visual-button");askedVisualValue=document.getElementById("asked-visual-value");askedVisualButton.addEventListener("click",()=>askedVisualValue.textContent="开启")<\\/script>`
                       };
                       return new Promise(resolve => setTimeout(() => {
                         window.__faqTestState.messages.push(user, assistant);
@@ -380,16 +408,16 @@ def run() -> None:
             )
             current_topic.click()
             page.wait_for_url(f"{base_url}/papers/instruct-model-effective-post-training/")
-            expect(page.locator("h1")).to_contain_text(
+            expect(page.locator(".md-content__inner > h1")).to_contain_text(
                 "从现成 Instruct checkpoint 出发，后训练还能把能力推多远"
             )
 
             page.goto(f"{base_url}/reading-guide/", wait_until="networkidle")
-            expect(page.locator(".learning-stage")).to_have_count(14)
+            expect(page.locator(".learning-stage")).to_have_count(15)
             expect(page.locator(".learning-stage").first).to_contain_text("进入前")
             expect(page.locator(".learning-stage").first).to_contain_text("读完后")
             expect(page.locator(".learning-stage").first).to_contain_text("阶段检查")
-            expect(page.locator(".learning-stage__papers > li")).to_have_count(67)
+            expect(page.locator(".learning-stage__papers > li")).to_have_count(77)
 
             # The Reader is a desktop-only application. Every generated paper
             # uses the same explicit disclosure control, whose fixed box must
@@ -471,15 +499,15 @@ def run() -> None:
             expect(post_training_link).to_be_visible()
             post_training_link.click()
             page.wait_for_url(f"{base_url}/papers/instruct-model-effective-post-training/")
-            expect(page.locator("h1")).to_contain_text(
+            expect(page.locator(".md-content__inner > h1")).to_contain_text(
                 "从现成 Instruct checkpoint 出发，后训练还能把能力推多远"
             )
 
             page.goto(f"{base_url}/papers/arxiv-2608.09867/", wait_until="networkidle")
-            expect(page.locator("h1")).to_contain_text("加密推理块不是保险箱")
+            expect(page.locator(".md-content__inner > h1")).to_contain_text("加密推理块不是保险箱")
             expect(page.locator(".paper-reading-card__route")).to_contain_text("本阶段 4/4")
-            expect(page.locator(".paper-reading-card__route")).to_contain_text("全路线 38/67")
-            expect(page.locator(".evidence-link")).to_have_count(14)
+            expect(page.locator(".paper-reading-card__route")).to_contain_text("全路线 38/77")
+            expect(page.locator(".evidence-link")).to_have_count(15)
             first_reasoning_source = page.locator(".evidence-link").first
             expect(first_reasoning_source).to_have_attribute("data-primary", "true")
             expect(first_reasoning_source).to_have_attribute(
@@ -487,9 +515,114 @@ def run() -> None:
             )
             expect(page.locator(".paper-reading-card__route nav a")).to_have_count(2)
 
+            page.goto(f"{base_url}/papers/arxiv-2106.09685/", wait_until="networkidle")
+            qlora_link = page.locator(
+                'a.evidence-link[data-source-id="arxiv-2305.14314v1"]'
+            )
+            expect(qlora_link).to_have_count(1)
+            expect(qlora_link).to_have_attribute(
+                "href", re.compile(r"/sources/arxiv-2305\.14314v1/paper\.pdf#page=1$")
+            )
+            lora_page_url = page.url
+            qlora_link.click()
+            expect(page).to_have_url(lora_page_url)
+            expect(page.locator(".evidence-panel")).to_be_visible()
+            expect(page.locator(".evidence-panel__frame")).to_have_attribute(
+                "src", re.compile(r"/pdf-viewer/.*arxiv-2305\.14314v1")
+            )
+            expect(page.locator(".evidence-panel__external")).to_have_attribute(
+                "href", "https://arxiv.org/abs/2305.14314"
+            )
+            expect(
+                page.frame_locator(".evidence-panel__frame").locator("#translation-toggle")
+            ).to_have_text("译文", timeout=15_000)
+
             page.goto(f"{base_url}/papers/tokenization-data-curation/", wait_until="networkidle")
             expect(page.locator(".paper-reading-card__stage-entry")).to_be_visible()
             expect(page.locator(".reader-tool-dock > .evidence-panel-toggle")).to_be_visible()
+
+            page.goto(f"{base_url}/papers/arxiv-2302.13971/", wait_until="networkidle")
+            expect(page.locator("article h1")).to_contain_text("LLaMA 1")
+            llama_lab = page.locator('[data-reader-widget="llama-budget"]')
+            expect(llama_lab).to_be_visible()
+            expect(llama_lab).to_have_attribute("data-enhanced", "true")
+            expect(page.locator('[data-llama-metric="params"]')).to_have_text("6.738B")
+            expect(page.locator('[data-llama-metric="train"]')).to_have_text("4.04e22 FLOPs")
+            expect(page.locator('[data-llama-metric="weights"]')).to_have_text("12.6 GiB")
+            expect(page.locator('[data-llama-metric="kv"]')).to_have_text("1 GiB")
+            expect(page.locator(".arithmatex")).not_to_have_count(0)
+            default_lab_height = llama_lab.evaluate("element => element.getBoundingClientRect().height")
+
+            page.locator('[data-llama-preset="65b"]').click()
+            expect(page.locator('[data-llama-preset="65b"]')).to_have_attribute("aria-pressed", "true")
+            expect(page.locator('[data-llama-metric="params"]')).to_have_text("65.286B")
+            expect(page.locator('[data-llama-metric="train"]')).to_have_text("5.48e23 FLOPs")
+            expect(page.locator('[data-llama-metric="kv"]')).to_have_text("5 GiB")
+            page.locator('[data-llama-input="batch"]').evaluate(
+                """element => {
+                  element.value = "4";
+                  element.dispatchEvent(new Event("input", {bubbles: true}));
+                }"""
+            )
+            page.locator('[data-llama-control="bytes"] [data-value="1"]').click()
+            expect(page.locator('[data-llama-metric="kv"]')).to_have_text("10 GiB")
+            expect(page.locator('[data-llama-metric="weights"]')).to_have_text("60.8 GiB")
+            expect(page.locator('[data-llama-input="context"]')).to_have_attribute(
+                "aria-valuetext", "2,048 tokens"
+            )
+            expect(page.locator('[data-llama-input="batch"]')).to_have_attribute(
+                "aria-valuetext", "4 sequences"
+            )
+            changed_lab_height = llama_lab.evaluate("element => element.getBoundingClientRect().height")
+            assert abs(changed_lab_height - default_lab_height) <= 1, (
+                default_lab_height,
+                changed_lab_height,
+            )
+
+            page.goto(
+                f"{base_url}/papers/knowledge-distillation-autoregressive/",
+                wait_until="networkidle",
+            )
+            expect(page.locator("article h1")).to_contain_text("OPSD")
+            distillation_lab = page.locator('[data-reader-widget="distillation-policy"]')
+            expect(distillation_lab).to_be_visible()
+            expect(distillation_lab).to_have_attribute("data-enhanced", "true")
+            expect(page.locator('[data-distillation-preset="opsd"]')).to_have_attribute(
+                "aria-pressed", "true"
+            )
+            expect(page.locator('[data-distillation-value="privilege"]')).to_have_text("参考解 y*")
+            expect(page.locator('[data-distillation-metric="risk"]')).to_have_text(
+                "hindsight/style 压过纠错"
+            )
+            expect(page.locator("mjx-container")).not_to_have_count(0)
+
+            page.locator('[data-distillation-preset="sdpo"]').click()
+            expect(page.locator('[data-distillation-preset="sdpo"]')).to_have_attribute(
+                "aria-pressed", "true"
+            )
+            expect(page.locator('[data-distillation-value="privilege"]')).to_have_text("环境文本反馈")
+            expect(page.locator('[data-distillation-metric="cost"]')).to_have_text(
+                "rollout + 环境 + teacher score"
+            )
+
+            page.locator('[data-distillation-preset="beta"]').click()
+            beta_control = page.locator("[data-distillation-beta-control]")
+            expect(beta_control).to_be_visible()
+            expect(page.locator("[data-distillation-beta-formula]")).to_have_text(
+                "target = softmax(0.35 z_ref + 0.65 z_teacher), β = 1.54"
+            )
+            page.locator("[data-distillation-beta-input]").evaluate(
+                """element => {
+                  element.value = "80";
+                  element.dispatchEvent(new Event("input", {bubbles: true}));
+                }"""
+            )
+            expect(page.locator("[data-distillation-beta-formula]")).to_have_text(
+                "target = softmax(0.20 z_ref + 0.80 z_teacher), β = 1.25"
+            )
+            expect(page.locator("[data-distillation-beta-input]")).to_have_attribute(
+                "aria-valuetext", "teacher 0.80, reference 0.20, beta 1.25"
+            )
 
             page.goto(f"{base_url}/papers/modern-transformer-block/", wait_until="networkidle")
             expect(page.locator("body")).to_have_class(re.compile(r"reader-modern-transformer-page"))
@@ -810,7 +943,7 @@ def run() -> None:
             expect(page.locator(".reader-section-tools__current small")).to_have_text(re.compile(r"1 / \d+"))
             expect(page.locator(".paper-reading-card__details")).to_be_visible()
             expect(page.locator(".paper-reading-card__route")).to_contain_text("本阶段 5/7")
-            expect(page.locator(".paper-reading-card__route")).to_contain_text("全路线 5/67")
+            expect(page.locator(".paper-reading-card__route")).to_contain_text("全路线 5/77")
             expect(page.locator(".paper-reading-card__route")).to_contain_text("从上一篇到本篇")
             expect(page.locator(".paper-reading-card__route nav a")).to_have_count(2)
             expect(page.locator(".reading-route-footer")).to_be_visible()
@@ -846,8 +979,14 @@ def run() -> None:
             expect(page.locator('[data-setting="knowledge-model"]')).to_have_value("gpt-5.6-terra")
             expect(page.locator('[data-setting="knowledge-effort"]')).to_have_value("medium")
             history_answer = page.locator('.knowledge-message[data-message-id="history-assistant"]')
-            expect(history_answer.locator(".knowledge-math-inline mjx-container")).to_be_visible(timeout=5_000)
-            expect(history_answer.locator(".knowledge-math-block mjx-container")).to_be_visible(timeout=5_000)
+            expect(history_answer.locator(".knowledge-math-inline mjx-container").first).to_be_visible(timeout=5_000)
+            expect(history_answer.locator(".knowledge-math-block mjx-container").first).to_be_visible(timeout=5_000)
+            expect(history_answer.locator(".knowledge-math-inline mjx-container")).to_have_count(3)
+            expect(history_answer.locator(".knowledge-math-block mjx-container")).to_have_count(4)
+            expect(history_answer.locator(".knowledge-diagram", has_text="公式信息流")).to_be_visible()
+            expect(history_answer.locator("img")).to_have_count(0)
+            assert page.evaluate("() => window.__markdownInjected") is None
+            assert page.evaluate("() => window.MathJax.config.chtml.adaptiveCSS") is False
             history_math_layout = history_answer.evaluate(
                 """element => [...element.querySelectorAll('.knowledge-math-inline, .knowledge-math-block')]
                   .map(math => {
@@ -860,6 +999,7 @@ def run() -> None:
                 item["hasOutput"] and item["width"] > 0 and item["height"] > 0
                 for item in history_math_layout
             ), history_math_layout
+            assert all(item["height"] < 100 for item in history_math_layout), history_math_layout
             expect(page.locator('.knowledge-message[data-message-id="history-user"] .knowledge-message__pdf')).to_be_visible()
             expect(page.locator('.knowledge-message[data-message-id="history-user"] canvas[data-rendered="true"]')).to_be_visible(timeout=15_000)
             layout = page.locator(".knowledge-assistant").evaluate(
@@ -996,15 +1136,19 @@ def run() -> None:
             expect(viewer.locator("#retranslation-controls")).to_be_visible()
             expect(viewer.locator("#retranslation-model")).to_have_value("gpt-5.6-terra")
             expect(viewer.locator("#retranslation-effort")).to_have_value("medium")
-            viewer.locator("#retranslation-model").select_option("gpt-5.6-sol")
+            viewer.locator("#retranslation-effort").select_option("ultra")
+            viewer.locator("#retranslation-model").select_option("gpt-6-astra")
+            expect(viewer.locator("#retranslation-effort")).to_have_value("max")
+            expect(viewer.locator('#retranslation-effort option[value="ultra"]')).to_have_js_property("disabled", True)
+            expect(viewer.locator('#retranslation-effort option[value="low"]')).to_have_js_property("disabled", False)
             viewer.locator("#retranslation-effort").select_option("xhigh")
             viewer.locator("#retranslate-page").click()
             expect(viewer.locator("#retranslate-page")).to_have_text("正在重译…")
-            expect(viewer.locator("#translation-state")).to_contain_text("gpt-5.6-sol / xhigh", timeout=3_000)
+            expect(viewer.locator("#translation-state")).to_contain_text("gpt-6-astra / xhigh", timeout=3_000)
             expect(viewer.locator("#retranslate-page")).to_have_text("重新翻译")
             retranslation_request = viewer.locator("body").evaluate("() => window.__translationPostCalls.at(-1)")
             assert retranslation_request["force"] is True
-            assert retranslation_request["model"] == "gpt-5.6-sol"
+            assert retranslation_request["model"] == "gpt-6-astra"
             assert retranslation_request["reasoning_effort"] == "xhigh"
             expect(viewer.locator("#show-source")).to_have_count(0)
             expect(viewer.locator(".translation-source")).to_have_count(0)
@@ -1050,7 +1194,7 @@ def run() -> None:
             # skipping pages already present in the local cache.
             viewer.locator("#translate-all").click()
             full_start_request = viewer.locator("body").evaluate("() => window.__translationFullStartCalls.at(-1)")
-            assert full_start_request["model"] == "gpt-5.6-sol"
+            assert full_start_request["model"] == "gpt-6-astra"
             assert full_start_request["reasoning_effort"] == "xhigh"
             assert full_start_request["concurrency"] == 16
             expect(viewer.locator("#translate-all")).to_have_text("停止全文")
@@ -1118,7 +1262,9 @@ def run() -> None:
             page.locator('[data-action="add-pdf"]').click()
             expect(page.locator(".knowledge-context")).to_contain_text("PDF 整页图像")
             expect(page.locator(".knowledge-context")).to_contain_text("物理页 7")
-            page.locator('[data-setting="knowledge-model"]').select_option("gpt-5.6-sol")
+            page.locator('[data-setting="knowledge-model"]').select_option("gpt-6-astra")
+            expect(page.locator('[data-setting="knowledge-effort"] option[value="ultra"]')).to_have_js_property("disabled", True)
+            expect(page.locator('[data-setting="knowledge-effort"] option[value="low"]')).to_have_js_property("disabled", False)
             page.locator('[data-setting="knowledge-effort"]').select_option("xhigh")
             page.wait_for_function("() => window.__knowledgeSettingsRequests.length === 2")
             state_requests_before_duplicate_init = page.evaluate(
@@ -1136,7 +1282,7 @@ def run() -> None:
             )
             page.wait_for_timeout(100)
             expect(page.locator('[data-setting="knowledge-model"]')).to_have_value(
-                "gpt-5.6-sol"
+                "gpt-6-astra"
             )
             expect(page.locator('[data-setting="knowledge-effort"]')).to_have_value(
                 "xhigh"
@@ -1144,6 +1290,17 @@ def run() -> None:
             assert page.evaluate(
                 "() => window.__knowledgeStateRequests"
             ) == state_requests_before_duplicate_init
+            history_visual_frame = history_answer.locator('iframe[title="知识问答可视化"]')
+            history_visual_frame.scroll_into_view_if_needed()
+            history_visual = history_answer.frame_locator('iframe[title="知识问答可视化"]')
+            expect(history_visual.locator("#history-visual-button")).to_be_visible()
+            history_visual_height = history_visual_frame.evaluate(
+                "element => element.getBoundingClientRect().height"
+            )
+            history_visual_overflow = history_visual.locator("body").evaluate(
+                "() => document.documentElement.scrollHeight - document.documentElement.clientHeight"
+            )
+            assert history_visual_overflow <= 1, history_visual_overflow
             page.locator(".knowledge-composer textarea").fill("解释第七页图表")
             page.locator('[data-action="send"]').click()
             expect(page.locator(".knowledge-context")).to_have_count(0)
@@ -1151,10 +1308,14 @@ def run() -> None:
             ask_settings = page.evaluate(
                 "() => { const call = window.__knowledgeAskRequests.at(-1); return {model: call.model, effort: call.effort}; }"
             )
-            assert ask_settings == {"model": "gpt-5.6-sol", "effort": "xhigh"}
+            assert ask_settings == {"model": "gpt-6-astra", "effort": "xhigh"}
             pending_message = page.locator(".knowledge-message.is-pending")
             expect(pending_message).to_contain_text("解释第七页图表")
             expect(pending_message.locator(".knowledge-message__pdf")).to_contain_text("物理页 7")
+            page.wait_for_timeout(250)
+            assert abs(history_visual_frame.evaluate(
+                "element => element.getBoundingClientRect().height"
+            ) - history_visual_height) <= 1
             expect(page.locator(".knowledge-session")).to_have_text("回答中…")
             expect(page.locator(".knowledge-message--assistant", has_text="模拟回答完成")).to_be_visible(timeout=3_000)
             expect(page.locator(".knowledge-message.is-pending")).to_have_count(0)
@@ -1180,6 +1341,12 @@ def run() -> None:
             assert inline_math_layout["overflowWrap"] == "normal", inline_math_layout
             assert inline_math_layout["whiteSpace"] == "nowrap", inline_math_layout
             assert inline_math_layout["wordBreak"] == "normal", inline_math_layout
+            expect(assistant.locator('iframe[title="知识问答可视化"]')).to_be_visible()
+            assistant_visual = assistant.frame_locator('iframe[title="知识问答可视化"]')
+            expect(assistant_visual.locator("#asked-visual-value")).to_have_text("关闭")
+            assistant_visual.locator("#asked-visual-button").click()
+            expect(assistant_visual.locator("#asked-visual-value")).to_have_text("开启")
+            assert page.evaluate("() => document.body.dataset.visualEscaped") is None
             assistant.get_by_role("button", name="保存为 FAQ").click()
             editor = page.locator(".knowledge-faq-editor__dialog")
             expect(editor).to_be_visible()
@@ -1194,6 +1361,8 @@ def run() -> None:
             expect(faq_item).to_be_visible()
             faq_item.locator("summary").click()
             expect(faq_item).to_contain_text("复习生成阶段的数据依赖。")
+            faq_visual = faq_item.frame_locator('iframe[title="第七页图表说明了什么？"]')
+            expect(faq_visual.locator("#asked-visual-button")).to_be_visible()
             expect(page.locator("#reader-personal-faq")).to_contain_text("第七页图表说明了什么？")
             faq_item.get_by_role("button", name="编辑").click()
             editor = page.locator(".knowledge-faq-editor__dialog")

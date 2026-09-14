@@ -2,6 +2,12 @@
 
 这不是一份按年份堆叠的论文清单，而是一条面向算法工程师的学习路线：先弄清问题，再看计算流程，最后核对实验与证据边界。
 
+!!! abstract "20260911论文补读路线"
+    结合 Agent RL 后训练项目，沿十个问题精读 28 篇论文：奖励、信用分配、GRPO、搜索、蒸馏、工具评测、RL 系统、翻译、检索，以及 F5-TTS 专项。每章附原文页码、关键公式与最小消融。
+
+    [进入论文补读路线](papers/20260911-reading-route.md){ .md-button .md-button--primary }
+    [直接阅读 F5-TTS](papers/20260911-f5tts.md){ .md-button }
+
 !!! abstract "当前研究：从现成 Instruct checkpoint 出发，后训练还能把能力推多远"
     只接纳真实 released-Instruct 起点，按成功样本密度、reward 密度、外部 target 新颖度与旧能力覆盖来选择 trajectory SFT、direct RL、知识蒸馏或 replay，并以 Qwen3-Coder Instruct 的 matched 决策实验收口。
 
@@ -48,3 +54,6 @@
 ## 内容边界
 
 本站是 `tasks/` 中调研成果的自动生成阅读副本。运行状态、中间 handoff 和控制文件不作为主要学习材料；原始研究文件不会被本站生成过程修改。
+
+!!! tip "Embedding 模型系统调研 · 2026-09-14 更新"
+    [连续阅读合并版](papers/embedding-models-lineage-selection.md)：五篇原文合为一条主线，补充 12 篇固定来源，覆盖小模型蒸馏、长文档、多模态、推理式检索与评测。

@@ -51,6 +51,13 @@ BACKTICK_PATH = re.compile(
 MARKDOWN_PATH = re.compile(
     r"(?<=\]\()((?:(?:\.\./)+)?(?:papers|sources)/[^)\s]+)"
 )
+LOCAL_PDF_MARKDOWN = re.compile(
+    r"\[([^\]\n]+)\]\(((?:(?:\.\./)+)?sources/[^)\s]+\.pdf)\)"
+)
+EXTERNAL_ARXIV_MARKDOWN = re.compile(
+    r"\[([^\]\n]+)\]\((https?://arxiv\.org/(?:abs|pdf)/"
+    r"(\d{4}\.\d{4,5})(?:v(\d+))?(?:\.pdf)?(?:#[^)]*)?)\)"
+)
 STATE_MATRIX_PATH = re.compile(r"(?<=\]\()(state/coverage-matrix-[^)\s]+)")
 ADMISSION_PATH = re.compile(r"(?<=\]\()((?:(?:\.\./)+)?reader/reading-admission\.yml)")
 SOURCE_TABLE_ROW = re.compile(r"^\|\s*`([^`]+)`\s*\|")
@@ -116,6 +123,16 @@ SOURCE_ALIASES = {
 }
 
 PAPER_PRIMARY = {
+    "20260911-reward-shaping.md": "icml-1999-potential-shaping",
+    "20260911-credit-assignment.md": "arxiv-2505.10978v3",
+    "20260911-grpo-objectives.md": "arxiv-2503.14476v2",
+    "20260911-search-training.md": "arxiv-2406.03816v3",
+    "20260911-distillation.md": "arxiv-2306.13649v3",
+    "20260911-tool-evaluation.md": "arxiv-2406.12045v1",
+    "20260911-rl-systems.md": "arxiv-2409.19256v2",
+    "20260911-translation.md": "arxiv-2207.04672v3",
+    "20260911-retrieval-sql.md": "arxiv-2404.16130v2",
+    "20260911-f5tts.md": "arxiv-2410.06885v3",
     "arxiv-1706.03762.md": "arxiv-1706.03762v7",
     "arxiv-1707.06347.md": "arxiv-1707.06347v2",
     "arxiv-1810.04805.md": "arxiv-1810.04805v2",
@@ -216,7 +233,12 @@ def load_reading_admission(
     unknown = sorted(set(candidates) - expected)
     if unknown:
         raise ValueError("Admission candidates are not task papers: " + ", ".join(unknown))
-    admitted = expected - set(candidates)
+    archived = data.get("archived", [])
+    if not isinstance(archived, list) or any(not isinstance(item, str) for item in archived):
+        raise ValueError("Reading admission archived must be a list of filenames")
+    if len(archived) != len(set(archived)) or set(archived) - expected or set(archived) & set(candidates):
+        raise ValueError("Archived papers must be unique existing papers outside candidates")
+    admitted = expected - set(candidates) - set(archived)
     declared = data.get("canonical_count")
     if declared is not None and int(declared) != len(admitted):
         raise ValueError(
@@ -605,7 +627,12 @@ def linkify(text: str, current: PurePosixPath, task_dir: Path) -> str:
         if normalized.parts[0] == "papers" and source.is_file() and normalized.suffix == ".md":
             target = normalized
         elif "sources" in normalized.parts:
-            return source_reference_url(shown, task_dir)
+            # Keep links to canonical paper PDFs local. Other source artifacts
+            # still resolve to their registered upstream page.
+            if normalized.suffix.lower() == ".pdf" and source.is_file():
+                target = normalized
+            else:
+                return source_reference_url(shown, task_dir)
         elif normalized.parts[0] == "state" and normalized.name.startswith("coverage-matrix-") and source.is_file() and normalized.suffix == ".md":
             # State coverage matrices are task-local audit records.  Expose
             # them under the generated metadata section so links from the
@@ -623,10 +650,69 @@ def linkify(text: str, current: PurePosixPath, task_dir: Path) -> str:
         target = destination(shown + locator)
         return f"[`{shown}`]({target}){locator}" if target else match.group(0)
 
+    def replace_local_pdf_link(match: re.Match[str]) -> str:
+        label = match.group(1)
+        shown = match.group(2)
+        location_match = SOURCE_LOCATION.fullmatch(shown)
+        raw_path = location_match.group(1) if location_match else shown
+        normalized_parts = tuple(part for part in PurePosixPath(raw_path).parts if part != "..")
+        normalized = PurePosixPath(*normalized_parts)
+        source = task_dir / normalized
+        if (
+            "sources" not in normalized.parts
+            or normalized.suffix.lower() != ".pdf"
+            or not source.is_file()
+        ):
+            return match.group(0)
+        sources_index = normalized.parts.index("sources")
+        if len(normalized.parts) <= sources_index + 1:
+            return match.group(0)
+        source_id = normalized.parts[sources_index + 1]
+        pdf_target = PurePosixPath("sources") / PurePosixPath(*normalized.parts[sources_index + 1 :])
+        rendered_page = rendered_html_path(current)
+        pdf_href = relative_link(rendered_page, pdf_target)
+        # Explicit paper links use the same evidence-link contract as
+        # [PDF:<source-id> p.<page>] citations, so one click opens the
+        # embedded PDF viewer with translation controls instead of navigating
+        # to the browser's standalone PDF tab.
+        escaped_label = html.escape(label)
+        escaped_href = html.escape(pdf_href + "#page=1", quote=True)
+        escaped_pdf = html.escape(pdf_href, quote=True)
+        escaped_source_id = html.escape(source_id, quote=True)
+        return (
+            f'<a class="evidence-link" href="{escaped_href}" '
+            f'data-pdf="{escaped_pdf}" data-page="1" '
+            f'data-source-id="{escaped_source_id}" '
+            f'data-source-title="{escaped_label}">{escaped_label}</a>'
+        )
+
+    def replace_external_arxiv_link(match: re.Match[str]) -> str:
+        label, upstream_url, arxiv_id, version = match.groups()
+        source_id = local_arxiv_source_id(arxiv_id, version, task_dir)
+        if not source_id:
+            return match.group(0)
+        pdf_target = PurePosixPath("sources") / source_id / "paper.pdf"
+        rendered_page = rendered_html_path(current)
+        pdf_href = relative_link(rendered_page, pdf_target)
+        escaped_label = html.escape(label)
+        escaped_href = html.escape(pdf_href + "#page=1", quote=True)
+        escaped_pdf = html.escape(pdf_href, quote=True)
+        escaped_source_id = html.escape(source_id, quote=True)
+        escaped_upstream = html.escape(upstream_url, quote=True)
+        return (
+            f'<a class="evidence-link" href="{escaped_href}" '
+            f'data-pdf="{escaped_pdf}" data-page="1" '
+            f'data-source-id="{escaped_source_id}" '
+            f'data-source-title="{escaped_label}" '
+            f'data-external-url="{escaped_upstream}">{escaped_label}</a>'
+        )
+
     def replace_markdown(match: re.Match[str]) -> str:
         shown = match.group(1)
         return destination(shown) or shown
 
+    text = LOCAL_PDF_MARKDOWN.sub(replace_local_pdf_link, text)
+    text = EXTERNAL_ARXIV_MARKDOWN.sub(replace_external_arxiv_link, text)
     text = BACKTICK_PATH.sub(replace_backtick, text)
     text = MARKDOWN_PATH.sub(replace_markdown, text)
     text = STATE_MATRIX_PATH.sub(replace_markdown, text)
@@ -645,6 +731,33 @@ def rendered_html_path(current: PurePosixPath) -> PurePosixPath:
     if current.name == "index.md":
         return current.with_suffix(".html")
     return current.parent / current.stem / "index.html"
+
+
+def local_arxiv_source_id(arxiv_id: str, version: str | None, task_dir: Path) -> str | None:
+    """Find a fixed local PDF matching an arXiv link.
+
+    Unversioned arXiv links are resolved to the highest version that has a
+    local PDF. This keeps the generated link tied to a byte-addressable source
+    while preserving the author's original landing-page URL.
+    """
+    sources_dir = task_dir / "sources"
+    if not sources_dir.is_dir():
+        return None
+    pattern = re.compile(rf"^arxiv-{re.escape(arxiv_id)}(?:v(\d+))?$")
+    candidates: list[tuple[int, str]] = []
+    for directory in sources_dir.iterdir():
+        if not directory.is_dir() or not (directory / "paper.pdf").is_file():
+            continue
+        match = pattern.fullmatch(directory.name)
+        if not match:
+            continue
+        candidate_version = match.group(1)
+        if version is not None and candidate_version != version:
+            continue
+        candidates.append((int(candidate_version or 0), directory.name))
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: (item[0], item[1]))[1]
 
 
 def link_citations(
@@ -708,13 +821,14 @@ def link_citations(
         locator_match = LOCATOR.search(citation)
         locator = locator_match.group(0) if locator_match else ""
         audit["linked"] += 1
+        locator_attr = f' data-locator="{html.escape(locator, quote=True)}"' if locator else ""
+        primary_attr = ' data-primary="true"' if source_id == primary_source else ""
         return (
             f'<a class="evidence-link" href="{html.escape(href, quote=True)}" '
             f'data-pdf="{html.escape(pdf_href, quote=True)}" '
             f'data-page="{page}" data-source-id="{html.escape(source_id, quote=True)}" '
             f'data-source-title="{html.escape(source_title, quote=True)}"'
-            f'{f" data-locator=\"{html.escape(locator, quote=True)}\"" if locator else ""}'
-            f'{" data-primary=\"true\"" if source_id == primary_source else ""}>{escaped}</a>'
+            f'{locator_attr}{primary_attr}>{escaped}</a>'
         )
 
     return CITATION.sub(replace, text)

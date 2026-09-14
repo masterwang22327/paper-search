@@ -39,6 +39,7 @@
   let revisionDiscussions = [];
   let shouldRevealLatestMessage = false;
   let initializedPanel = null;
+  let markdownParser = null;
   let mathTypesetQueue = Promise.resolve();
   const pendingMathBodies = new WeakSet();
 
@@ -76,6 +77,10 @@
         typesetVisibleMessages();
         revealLatestMessage();
       });
+    } else if (name === "faq") {
+      requestAnimationFrame(() => {
+        faqPane?.querySelectorAll(".knowledge-rich-text").forEach(typesetMessage);
+      });
     }
   }
 
@@ -100,8 +105,8 @@
       '    <textarea placeholder="针对当前文档提问。可先在正文中选中文字加入上下文。"></textarea>',
       '    <div class="knowledge-toolbar">',
       '      <div class="knowledge-model-settings">',
-      '        <select data-setting="knowledge-model" aria-label="知识问答模型" title="知识问答模型"><option value="gpt-5.6-terra">gpt-5.6-terra</option><option value="gpt-5.6-sol">gpt-5.6-sol</option></select>',
-      '        <select data-setting="knowledge-effort" aria-label="知识问答推理强度" title="知识问答推理强度"><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option><option value="max">max</option><option value="ultra">ultra</option></select>',
+      '        <select data-setting="knowledge-model" aria-label="知识问答模型" title="知识问答模型"><option value="gpt-5.6-terra">gpt-5.6-terra</option><option value="gpt-5.6-sol">gpt-5.6-sol</option><option value="gpt-6-astra">gpt-6-astra</option></select>',
+      '        <select data-setting="knowledge-effort" aria-label="知识问答推理强度" title="知识问答推理强度"><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option><option value="max">max</option><option value="ultra">ultra</option></select>',
       "      </div>",
       '      <div class="knowledge-toolbar-actions">',
       '        <button type="button" data-action="add-pdf" title="把当前物理页渲染为图像并交给 Codex 观察">加入当前 PDF 页图像</button>',
@@ -274,140 +279,73 @@
     return figure;
   }
 
-  function appendInlineMarkdown(container, value) {
-    const pattern = /(\*\*[^*]+\*\*|`[^`]+`|\\\([\s\S]+?\\\)|\$[^$\n]+\$)/g;
-    let cursor = 0;
-    for (const match of value.matchAll(pattern)) {
-      container.appendChild(document.createTextNode(value.slice(cursor, match.index)));
-      const token = match[0];
-      let node;
-      if (token.startsWith("**")) {
-        node = document.createElement("strong");
-        node.textContent = token.slice(2, -2);
-      } else if (token.startsWith("`")) {
-        node = document.createElement("code");
-        node.textContent = token.slice(1, -1);
-      } else {
-        node = document.createElement("span");
-        node.className = "arithmatex knowledge-math-inline";
-        node.textContent = token;
-      }
-      container.appendChild(node);
-      cursor = match.index + token.length;
-    }
-    container.appendChild(document.createTextNode(value.slice(cursor)));
+  function knowledgeMarkdownParser() {
+    if (markdownParser) return markdownParser;
+    if (typeof window.markdownit !== "function" || typeof window.texmath !== "function") return null;
+    const parser = window.markdownit({ html: false, linkify: false, typographer: false });
+    parser.use(window.texmath, {
+      delimiters: ["brackets", "dollars"],
+      engine: { renderToString: () => "" }
+    });
+    // Display math may follow prose on the next line without a blank paragraph.
+    // Delegate to texmath so fences, indentation and math delimiters stay intact.
+    const displayRules = window.texmath.mergeDelimiters(["brackets", "dollars"])
+      .block.map(rule => window.texmath.block(rule));
+    parser.block.ruler.before("paragraph", "knowledge_display_math", (state, start, end, silent) =>
+      displayRules.some(rule => rule(state, start, end, silent)), { alt: ["paragraph"] });
+    const mathMarkup = (token, display) => {
+      const tag = display ? "div" : "span";
+      const className = display ? "knowledge-math-block" : "knowledge-math-inline";
+      const open = display ? "\\[" : "\\(";
+      const close = display ? "\\]" : "\\)";
+      // Some persisted JSON answers decoded the TeX prefix \\b as backspace.
+      // Repair only the unambiguous command inside math, never ordinary prose/code.
+      const source = token.content.replace(/\u0008oldsymbol\b/g, "\\boldsymbol");
+      return `<${tag} class="arithmatex ${className}">${open}${parser.utils.escapeHtml(source)}${close}</${tag}>`;
+    };
+    parser.renderer.rules.math_inline = (tokens, index) => mathMarkup(tokens[index], false);
+    parser.renderer.rules.math_inline_double = (tokens, index) => mathMarkup(tokens[index], true);
+    parser.renderer.rules.math_block = (tokens, index) => mathMarkup(tokens[index], true);
+    parser.renderer.rules.math_block_eqno = (tokens, index) => mathMarkup(tokens[index], true);
+    markdownParser = parser;
+    return markdownParser;
   }
 
   function renderMarkdown(value) {
     const root = document.createDocumentFragment();
-    const lines = String(value || "").replace(/\r\n?/g, "\n").split("\n");
-    let index = 0;
-    while (index < lines.length) {
-      const line = lines[index];
-      if (!line.trim()) { index += 1; continue; }
-      if (/^```/.test(line)) {
-        const language = line.slice(3).trim();
-        const codeLines = [];
-        index += 1;
-        while (index < lines.length && !/^```/.test(lines[index])) codeLines.push(lines[index++]);
-        index += index < lines.length ? 1 : 0;
-        const pre = document.createElement("pre");
-        const code = document.createElement("code");
-        if (language) code.dataset.language = language;
-        code.textContent = codeLines.join("\n");
-        pre.appendChild(code);
-        root.appendChild(pre);
-        continue;
-      }
-      if (/^\\\[$/.test(line.trim())) {
-        const formula = [line.trim()];
-        index += 1;
-        while (index < lines.length) {
-          formula.push(lines[index]);
-          if (/\\\]$/.test(lines[index].trim())) { index += 1; break; }
-          index += 1;
-        }
-        const block = document.createElement("div");
-        block.className = "arithmatex knowledge-math-block";
-        block.textContent = formula.join("\n");
-        root.appendChild(block);
-        continue;
-      }
-      const tableHeader = line.trim();
-      const tableDivider = lines[index + 1]?.trim() || "";
-      if (/^\|.*\|$/.test(tableHeader) && /^\|(?:\s*:?-{3,}:?\s*\|)+$/.test(tableDivider)) {
-        const splitRow = row => row.slice(1, -1).split("|").map(cell => cell.trim());
-        const headers = splitRow(tableHeader);
-        const table = document.createElement("table");
-        const head = document.createElement("thead");
-        const headRow = document.createElement("tr");
-        for (const cell of headers) {
-          const th = document.createElement("th");
-          appendInlineMarkdown(th, cell);
-          headRow.appendChild(th);
-        }
-        head.appendChild(headRow);
-        const body = document.createElement("tbody");
-        index += 2;
-        while (index < lines.length && /^\|.*\|$/.test(lines[index].trim())) {
-          const cells = splitRow(lines[index].trim());
-          const row = document.createElement("tr");
-          for (let column = 0; column < headers.length; column += 1) {
-            const td = document.createElement("td");
-            appendInlineMarkdown(td, cells[column] || "");
-            row.appendChild(td);
-          }
-          body.appendChild(row);
-          index += 1;
-        }
-        table.append(head, body);
-        const wrapper = document.createElement("div");
-        wrapper.className = "knowledge-markdown-table";
-        wrapper.appendChild(table);
-        root.appendChild(wrapper);
-        continue;
-      }
-      const headingMatch = line.match(/^(#{2,4})\s+(.+)$/);
-      if (headingMatch) {
-        const heading = document.createElement(`h${Math.min(4, headingMatch[1].length)}`);
-        appendInlineMarkdown(heading, headingMatch[2]);
-        root.appendChild(heading);
-        index += 1;
-        continue;
-      }
-      if (/^>\s?/.test(line)) {
-        const quote = document.createElement("blockquote");
-        const quoteLines = [];
-        while (index < lines.length && /^>\s?/.test(lines[index])) quoteLines.push(lines[index++].replace(/^>\s?/, ""));
-        appendInlineMarkdown(quote, quoteLines.join("\n"));
-        root.appendChild(quote);
-        continue;
-      }
-      const listMatch = line.match(/^\s*(?:([-*])|(\d+)\.)\s+(.+)$/);
-      if (listMatch) {
-        const ordered = Boolean(listMatch[2]);
-        const list = document.createElement(ordered ? "ol" : "ul");
-        while (index < lines.length) {
-          const itemMatch = lines[index].match(/^\s*(?:([-*])|(\d+)\.)\s+(.+)$/);
-          if (!itemMatch || Boolean(itemMatch[2]) !== ordered) break;
-          const item = document.createElement("li");
-          appendInlineMarkdown(item, itemMatch[3]);
-          list.appendChild(item);
-          index += 1;
-        }
-        root.appendChild(list);
-        continue;
-      }
-      const paragraphLines = [line];
-      index += 1;
-      while (index < lines.length && lines[index].trim() && !/^(#{2,4})\s+|^```|^>\s?|^\s*(?:[-*]|\d+\.)\s+|^\\\[$/.test(lines[index]) && !(/^\|.*\|$/.test(lines[index].trim()) && /^\|(?:\s*:?-{3,}:?\s*\|)+$/.test(lines[index + 1]?.trim() || ""))) {
-        paragraphLines.push(lines[index++]);
-      }
+    const parser = knowledgeMarkdownParser();
+    if (!parser) {
       const paragraph = document.createElement("p");
-      appendInlineMarkdown(paragraph, paragraphLines.join(" "));
+      paragraph.textContent = String(value || "");
       root.appendChild(paragraph);
+      return root;
     }
+    const template = document.createElement("template");
+    template.innerHTML = parser.render(String(value || ""));
+    template.content.querySelectorAll("table").forEach(table => {
+      const wrapper = document.createElement("div");
+      wrapper.className = "knowledge-markdown-table";
+      table.before(wrapper);
+      wrapper.appendChild(table);
+    });
+    root.appendChild(template.content);
     return root;
+  }
+
+  function embeddedDiagram(value) {
+    const content = String(value || "");
+    const match = /```reader-diagram(?:[ \t]+json)?[ \t]*\r?\n([\s\S]*?)\r?\n```/i.exec(content);
+    if (!match) return { content, visualization: null };
+    try {
+      const visualization = JSON.parse(match[1]);
+      if (!diagramElement(visualization)) return { content, visualization: null };
+      return {
+        content: (content.slice(0, match.index) + content.slice(match.index + match[0].length)).trim(),
+        visualization
+      };
+    } catch (_) {
+      return { content, visualization: null };
+    }
   }
 
   function typesetMessage(body) {
@@ -418,15 +356,36 @@
       return;
     }
     const mathNodes = Array.from(body.querySelectorAll(".knowledge-math-inline, .knowledge-math-block"));
-    if (!mathNodes.some(node => !node.querySelector("mjx-container")) || pendingMathBodies.has(body)) return;
+    if (!mathNodes.some(node => !node.dataset.mathRendered) || pendingMathBodies.has(body)) return;
     pendingMathBodies.add(body);
     mathTypesetQueue = mathTypesetQueue
       .catch(() => undefined)
-      .then(() => {
+      .then(async () => {
         if (!body.isConnected || !body.getClientRects().length || body.clientWidth <= 0) return;
         const pendingNodes = Array.from(body.querySelectorAll(".knowledge-math-inline, .knowledge-math-block"));
-        if (!pendingNodes.some(node => !node.querySelector("mjx-container"))) return;
-        return mathJax.typesetPromise([body]);
+        for (const node of pendingNodes) {
+          if (node.dataset.mathRendered) continue;
+          const source = node.textContent || "";
+          try {
+            if (!node.isConnected) continue;
+            await mathJax.typesetPromise([node]);
+            const failed = node.querySelector("mjx-merror") || !node.querySelector("mjx-container");
+            if (failed) {
+              // MathJax can render an merror without rejecting the promise.
+              // Keep the answer readable and expose the source for repair.
+              mathJax.typesetClear?.([node]);
+              node.replaceChildren(document.createTextNode(source));
+              node.classList.add("knowledge-math-error");
+              node.title = "公式解析失败，已显示原始公式";
+            }
+            node.dataset.mathRendered = node.querySelector("mjx-container") && !failed ? "true" : "error";
+          } catch (_) {
+            mathJax.typesetClear?.([node]);
+            node.replaceChildren(document.createTextNode(source));
+            node.classList.add("knowledge-math-error");
+            node.dataset.mathRendered = "error";
+          }
+        }
       })
       .catch(() => undefined)
       .finally(() => pendingMathBodies.delete(body));
@@ -454,11 +413,35 @@
       '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'unsafe-inline\'; style-src \'unsafe-inline\'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src \'none\'; form-action \'none\'; base-uri \'none\'">',
       '<style>html,body{margin:0;padding:0;background:transparent;color:#263238;font:14px/1.5 system-ui,sans-serif}*{box-sizing:border-box}svg,canvas,img{max-width:100%;height:auto}button,input,select{font:inherit}</style>'
     ].join("");
-    const resizeBridge = '<script>(()=>{const send=()=>parent.postMessage({type:"reader-visual-height",height:Math.ceil(document.documentElement.scrollHeight)},"*");new ResizeObserver(send).observe(document.documentElement);addEventListener("load",send);send()})()<\/script>';
+    const resizeBridge = `<script>(()=>{
+      let queued=false,lastHeight=0;
+      const send=()=>{
+        if(queued)return;
+        queued=true;
+        requestAnimationFrame(()=>{
+          queued=false;
+          const height=Math.ceil(document.documentElement.scrollHeight);
+          if(height<=0||Math.abs(height-lastHeight)<2)return;
+          lastHeight=height;
+          parent.postMessage({type:"reader-visual-height",height},"*");
+        });
+      };
+      const observe=()=>{
+        if(document.body)new ResizeObserver(send).observe(document.body);
+        send();
+      };
+      document.readyState==="loading"?addEventListener("DOMContentLoaded",observe,{once:true}):observe();
+      addEventListener("load",send,{once:true});
+    })()<\/script>`;
     frame.srcdoc = `${base}${value}${resizeBridge}`;
     const onMessage = event => {
       if (event.source !== frame.contentWindow || event.data?.type !== "reader-visual-height") return;
-      const height = Math.max(120, Math.min(1200, Number(event.data.height) || 320));
+      const contentHeight = Number(event.data.height);
+      if (!Number.isFinite(contentHeight) || contentHeight <= 0) return;
+      const frameChrome = Math.max(0, frame.offsetHeight - frame.clientHeight);
+      const height = Math.max(120, Math.min(1200, Math.ceil(contentHeight + frameChrome)));
+      const currentHeight = parseFloat(frame.style.height) || frame.getBoundingClientRect().height;
+      if (Math.abs(currentHeight - height) < 1) return;
       frame.style.height = `${height}px`;
     };
     window.addEventListener("message", onMessage);
@@ -522,6 +505,22 @@
     content.className = "reader-revision__content knowledge-rich-text";
     renderRichText(content, item.markdown);
     card.append(header, content);
+    if (item.target_text) {
+      const context = document.createElement("button");
+      context.type = "button";
+      context.className = "reader-revision__context";
+      const quote = String(item.target_text).replace(/\s+/g, " ").trim();
+      context.textContent = `对应原文：${quote.length > 80 ? quote.slice(0, 80) + "…" : quote} ↗`;
+      context.title = "定位原文：" + quote;
+      context.addEventListener("click", () => {
+        const anchor = revisionAnchor(item, revisionAnchorOffsets(revisions));
+        if (!anchor) return;
+        anchor.scrollIntoView({ behavior: "smooth", block: "start", inline: "nearest" });
+        anchor.classList.add("reader-context-highlight");
+        setTimeout(() => anchor.classList.remove("reader-context-highlight"), 2000);
+      });
+      header.after(context);
+    }
     const diagram = diagramElement(item.diagram);
     if (diagram) card.appendChild(diagram);
     const visual = visualHtmlElement(item.visual_html, item.title);
@@ -551,6 +550,17 @@
       });
       footer.appendChild(remove);
     }
+    const continueButton = document.createElement("button");
+    continueButton.type = "button";
+    continueButton.className = "reader-revision__continue";
+    continueButton.textContent = "继续原文 ↓";
+    continueButton.hidden = !item.id;
+    continueButton.addEventListener("click", () => {
+      let next = card.nextElementSibling;
+      while (next?.matches(".reader-revision, .reader-table-hint")) next = next.nextElementSibling;
+      next?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    footer.appendChild(continueButton);
     card.appendChild(footer);
     return card;
   }
@@ -821,6 +831,21 @@
     return true;
   }
 
+  function revisionInsertionAnchor(anchor) {
+    // A cell is a valid selection anchor, but its row cannot contain an aside.
+    // Keep full revision cards outside the table and Material's scroll wrappers.
+    let table = anchor.closest("table");
+    if (!table) return anchor;
+    while (table.parentElement?.closest("table")) {
+      table = table.parentElement.closest("table");
+    }
+    const container = table.closest(".md-typeset__scrollwrap")
+      || table.closest(".md-typeset__table")
+      || table;
+    return container.nextElementSibling?.classList.contains("reader-table-hint")
+      ? container.nextElementSibling : container;
+  }
+
   function renderRevisions(items) {
     revisions = items;
     restoreManualReplacements();
@@ -843,10 +868,10 @@
         const anchor = revisionAnchor(item, anchorOffsets);
         if (!anchor) continue;
         const card = revisionCard(item);
-        const anchorId = anchor.dataset.readerBlock;
-        const previous = lastByAnchor.get(anchorId);
-        (previous || anchor).insertAdjacentElement("afterend", card);
-        lastByAnchor.set(anchorId, card);
+        const insertionAnchor = revisionInsertionAnchor(anchor);
+        const previous = lastByAnchor.get(insertionAnchor);
+        (previous || insertionAnchor).insertAdjacentElement("afterend", card);
+        lastByAnchor.set(insertionAnchor, card);
         continue;
       }
       // Accepted revisions survive appended or rewritten surrounding prose only
@@ -854,10 +879,10 @@
       const anchor = revisionAnchor(item, anchorOffsets);
       if (!anchor) continue;
       const card = revisionCard(item);
-      const anchorId = anchor.dataset.readerBlock;
-      const previous = lastByAnchor.get(anchorId);
-      (previous || anchor).insertAdjacentElement("afterend", card);
-      lastByAnchor.set(anchorId, card);
+      const insertionAnchor = revisionInsertionAnchor(anchor);
+      const previous = lastByAnchor.get(insertionAnchor);
+      (previous || insertionAnchor).insertAdjacentElement("afterend", card);
+      lastByAnchor.set(insertionAnchor, card);
     }
   }
 
@@ -893,7 +918,7 @@
             body: JSON.stringify({ document_id: documentId, candidate_id: turn.candidate.candidate_id })
           });
           revisionDiscussions = revisionDiscussions.filter(item => item.id !== discussion.id);
-          overlay.remove();
+          overlay._close();
           renderRevisions(saved.items || []);
           document.querySelector(`[data-revision-id="${CSS.escape(saved.items.at(-1)?.id || "")}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
         } catch (error) {
@@ -914,12 +939,70 @@
     dialog.elements.instruction.focus();
   }
 
+  let dialogSequence = 0;
+  function mountDialog(overlay, dialog) {
+    const previousFocus = document.activeElement;
+    const background = [...document.body.children].filter(element => element !== overlay);
+    const inertStates = background.map(element => [element, element.inert]);
+    background.forEach(element => { element.inert = true; });
+    const heading = dialog.querySelector("h3");
+    dialogSequence += 1;
+    if (heading) {
+      heading.id = `reader-dialog-title-${dialogSequence}`;
+      dialog.setAttribute("aria-labelledby", heading.id);
+    }
+    dialog.setAttribute("role", "dialog");
+    dialog.setAttribute("aria-modal", "true");
+    dialog.tabIndex = -1;
+    const onKeydown = event => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        overlay._close();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = [...dialog.querySelectorAll(
+        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), details > summary, a[href]'
+      )].filter(element => !element.hidden && element.getClientRects().length);
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable.at(-1);
+      if (document.activeElement === dialog || !overlay.contains(document.activeElement)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      } else if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    overlay._close = () => {
+      if (!overlay.isConnected) return;
+      document.removeEventListener("keydown", onKeydown, true);
+      overlay.remove();
+      inertStates.forEach(([element, inert]) => { element.inert = inert; });
+      document.body.classList.remove("reader-modal-open");
+      if (previousFocus?.isConnected) previousFocus.focus();
+    };
+    overlay.addEventListener("click", event => {
+      if (event.target === overlay) dialog.focus();
+    });
+    document.addEventListener("keydown", onKeydown, true);
+    document.body.classList.add("reader-modal-open");
+    document.body.appendChild(overlay);
+  }
+
   function openManualRevisionEditor() {
     const selection = selectionDetails();
     if (!selection) return;
     selectionMenu.classList.remove("is-visible");
     window.getSelection()?.removeAllRanges();
-    document.querySelector(".reader-revision-editor")?.remove();
+    const previousDialog = document.querySelector(".reader-revision-editor");
+    if (previousDialog?._close) previousDialog._close();
+    else previousDialog?.remove();
     const overlay = document.createElement("div");
     overlay.className = "reader-revision-editor";
     const dialog = document.createElement("form");
@@ -937,7 +1020,7 @@
     const original = selection.contexts.map(item => item.text).join("\n\n");
     dialog.elements.markdown.value = original;
     dialog.querySelector("blockquote").textContent = original;
-    dialog.querySelector('[data-action="cancel"]').addEventListener("click", () => overlay.remove());
+    dialog.querySelector('[data-action="cancel"]').addEventListener("click", () => overlay._close());
     dialog.addEventListener("submit", async event => {
       event.preventDefault();
       const save = dialog.querySelector('[type="submit"]');
@@ -954,7 +1037,7 @@
             markdown: dialog.elements.markdown.value.trim()
           })
         });
-        overlay.remove();
+        overlay._close();
         renderRevisions(saved.items || []);
         const latest = saved.items?.at(-1);
         document.querySelector(`[data-revision-id="${CSS.escape(latest?.id || "")}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -970,9 +1053,8 @@
         message.textContent = error.message;
       }
     });
-    overlay.addEventListener("click", event => { if (event.target === overlay) overlay.remove(); });
     overlay.appendChild(dialog);
-    document.body.appendChild(overlay);
+    mountDialog(overlay, dialog);
     dialog.elements.markdown.focus();
     dialog.elements.markdown.setSelectionRange(0, dialog.elements.markdown.value.length);
   }
@@ -982,7 +1064,9 @@
     if (!selection) return;
     selectionMenu.classList.remove("is-visible");
     window.getSelection()?.removeAllRanges();
-    document.querySelector(".reader-revision-editor")?.remove();
+    const previousDialog = document.querySelector(".reader-revision-editor");
+    if (previousDialog?._close) previousDialog._close();
+    else previousDialog?.remove();
     const overlay = document.createElement("div");
     overlay.className = "reader-revision-editor";
     const dialog = document.createElement("form");
@@ -991,8 +1075,8 @@
       "<h3>编辑选中的正文</h3>",
       '<div class="reader-revision-editor__controls">',
       '<div class="reader-revision-editor__model">',
-      '<label>模型<select name="model"><option value="gpt-5.6-terra">gpt-5.6-terra</option><option value="gpt-5.6-sol">gpt-5.6-sol</option></select></label>',
-      '<label>推理强度<select name="effort"><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option><option value="max">max</option><option value="ultra">ultra</option></select></label>',
+      '<label>模型<select name="model"><option value="gpt-5.6-terra">gpt-5.6-terra</option><option value="gpt-5.6-sol">gpt-5.6-sol</option><option value="gpt-6-astra">gpt-6-astra</option></select></label>',
+      '<label>推理强度<select name="effort"><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option><option value="max">max</option><option value="ultra">ultra</option></select></label>',
       "</div>",
       '<label>修改要求<textarea name="instruction" maxlength="2000" required placeholder="例如：核对这段结论的适用边界，并用一个简化图解释"></textarea></label>',
       '<p>可继续追问候选；原文不会被直接覆盖。</p>',
@@ -1002,7 +1086,9 @@
     ].join("");
     dialog.elements.model.value = revisionSettings.model;
     dialog.elements.effort.value = revisionSettings.effort;
+    syncReasoningOptions(dialog.elements.model, dialog.elements.effort);
     const saveSettings = async () => {
+      syncReasoningOptions(dialog.elements.model, dialog.elements.effort);
       const previous = { ...revisionSettings };
       revisionSettings = { model: dialog.elements.model.value, effort: dialog.elements.effort.value };
       try {
@@ -1014,6 +1100,7 @@
         revisionSettings = previous;
         dialog.elements.model.value = previous.model;
         dialog.elements.effort.value = previous.effort;
+        syncReasoningOptions(dialog.elements.model, dialog.elements.effort);
         dialog.querySelector(".reader-revision-editor__preview").textContent = error.message;
       }
     };
@@ -1022,7 +1109,7 @@
     const cancel = document.createElement("button");
     cancel.type = "button";
     cancel.textContent = "取消";
-    cancel.addEventListener("click", () => overlay.remove());
+    cancel.addEventListener("click", () => overlay._close());
     const generate = document.createElement("button");
     generate.type = "submit";
     generate.className = "reader-revision-editor__primary";
@@ -1038,7 +1125,7 @@
         body: JSON.stringify({ document_id: documentId, discussion_id: dialog._discussion.id })
       });
       revisionDiscussions = revisionDiscussions.filter(item => item.id !== dialog._discussion.id);
-      overlay.remove();
+      overlay._close();
     });
     dialog._cancelButton = cancel;
     dialog._generateButton = generate;
@@ -1070,9 +1157,8 @@
         dialog.querySelector(".reader-revision-editor__preview").textContent = error.message;
       }
     });
-    overlay.addEventListener("click", event => { if (event.target === overlay) overlay.remove(); });
     overlay.appendChild(dialog);
-    document.body.appendChild(overlay);
+    mountDialog(overlay, dialog);
     const selectedIds = selection.contexts.map(item => item.block_id);
     const draft = [...revisionDiscussions].reverse().find(item =>
       item.status === "draft" && JSON.stringify(item.target_blocks) === JSON.stringify(selectedIds)
@@ -1091,11 +1177,16 @@
     if (message.id) element.dataset.messageId = message.id;
     const body = document.createElement("div");
     body.className = `knowledge-message__body${message.role === "assistant" ? " knowledge-rich-text" : ""}`;
-    if (message.role === "assistant") body.appendChild(renderMarkdown(message.content));
+    const presentation = message.role === "assistant" ? embeddedDiagram(message.content) : null;
+    if (message.role === "assistant") body.appendChild(renderMarkdown(presentation.content));
     else body.textContent = message.content;
     element.appendChild(body);
-    const diagram = diagramElement(message.visualization);
+    const diagram = diagramElement(message.visualization || presentation?.visualization);
     if (diagram) element.appendChild(diagram);
+    const visual = message.role === "assistant"
+      ? visualHtmlElement(message.visual_html, "知识问答可视化")
+      : null;
+    if (visual) element.appendChild(visual);
     if (message.role === "user" && Array.isArray(message.contexts)) {
       for (const context of message.contexts) {
         const quote = document.createElement("button");
@@ -1156,7 +1247,9 @@
   }
 
   function openFaqEditor(message, faq = null) {
-    document.querySelector(".knowledge-faq-editor")?.remove();
+    const previousDialog = document.querySelector(".knowledge-faq-editor");
+    if (previousDialog?._close) previousDialog._close();
+    else previousDialog?.remove();
     const overlay = document.createElement("div");
     overlay.className = "knowledge-faq-editor";
     const dialog = document.createElement("form");
@@ -1171,8 +1264,7 @@
     dialog.elements.question.value = faq?.question || previousUserQuestion(message.id).slice(0, 300);
     dialog.elements.answer.value = faq?.answer || message.content.slice(0, 5000);
     dialog.elements.note.value = faq?.note || "";
-    dialog.querySelector('[data-action="cancel"]').addEventListener("click", () => overlay.remove());
-    overlay.addEventListener("click", event => { if (event.target === overlay) overlay.remove(); });
+    dialog.querySelector('[data-action="cancel"]').addEventListener("click", () => overlay._close());
     dialog.addEventListener("submit", async event => {
       event.preventDefault();
       const submit = dialog.querySelector('[type="submit"]');
@@ -1189,7 +1281,7 @@
             note: dialog.elements.note.value.trim()
           })
         });
-        overlay.remove();
+        overlay._close();
         renderFaq({ faq: saved, pending: pendingFaq });
         switchTab("faq");
       } catch (error) {
@@ -1203,7 +1295,7 @@
       }
     });
     overlay.appendChild(dialog);
-    document.body.appendChild(overlay);
+    mountDialog(overlay, dialog);
     dialog.elements.question.focus();
   }
 
@@ -1301,10 +1393,16 @@
       question.textContent = item.question;
       const answer = document.createElement("div");
       answer.className = "knowledge-faq-answer knowledge-rich-text";
-      renderRichText(answer, item.answer);
+      const presentation = embeddedDiagram(item.answer);
+      renderRichText(answer, presentation.content);
+      details.addEventListener("toggle", () => {
+        if (details.open) requestAnimationFrame(() => typesetMessage(answer));
+      });
       details.append(question, answer);
-      const diagram = diagramElement(item.visualization);
+      const diagram = diagramElement(item.visualization || presentation.visualization);
       if (diagram) details.appendChild(diagram);
+      const visual = visualHtmlElement(item.visual_html, item.question);
+      if (visual) details.appendChild(visual);
       if (item.note) {
         const note = document.createElement("blockquote");
         note.className = "knowledge-faq-note";
@@ -1329,17 +1427,23 @@
       element.appendChild(checkbox);
     }
     const details = document.createElement("details");
+    details.addEventListener("toggle", () => {
+      if (details.open) requestAnimationFrame(() => typesetMessage(answer));
+    });
     const question = document.createElement("summary");
     question.className = "knowledge-faq-question";
     question.textContent = item.question;
     const answer = document.createElement("div");
     answer.className = "knowledge-faq-answer knowledge-rich-text";
-    renderRichText(answer, item.answer);
+    const presentation = embeddedDiagram(item.answer);
+    renderRichText(answer, presentation.content);
     const evidence = document.createElement("small");
     evidence.textContent = (item.evidence || []).map(entry => `${entry.source_id} p.${entry.page}`).join(" · ") || item.knowledge_type;
     details.append(question, answer);
-    const diagram = diagramElement(item.visualization);
+    const diagram = diagramElement(item.visualization || presentation.visualization);
     if (diagram) details.appendChild(diagram);
+    const visual = visualHtmlElement(item.visual_html, item.question);
+    if (visual) details.appendChild(visual);
     if (item.note) {
       const note = document.createElement("div");
       note.className = "knowledge-faq-note";
@@ -1371,20 +1475,34 @@
     return chatThreads.find(thread => thread.id === selectedThreadId) || null;
   }
 
+  function syncReasoningOptions(modelSelect, effortSelect) {
+    const astra = modelSelect.value === "gpt-6-astra";
+    for (const option of effortSelect.options) {
+      option.disabled = astra ? option.value === "ultra" : option.value === "low";
+      option.hidden = option.disabled;
+    }
+    if (!effortSelect.value || effortSelect.selectedOptions[0].disabled) {
+      effortSelect.value = astra && effortSelect.value === "ultra" ? "max" : "medium";
+    }
+  }
+
   function applyKnowledgeSettings(value) {
     if (!value || !knowledgeModelSelect || !knowledgeEffortSelect) return;
-    const model = ["gpt-5.6-terra", "gpt-5.6-sol"].includes(value.model)
+    const model = ["gpt-5.6-terra", "gpt-5.6-sol", "gpt-6-astra"].includes(value.model)
       ? value.model
       : "gpt-5.6-terra";
-    const effort = ["medium", "high", "xhigh", "max", "ultra"].includes(value.effort)
+    const effort = ["low", "medium", "high", "xhigh", "max", "ultra"].includes(value.effort)
       ? value.effort
       : "medium";
     knowledgeSettings = { model, effort };
     knowledgeModelSelect.value = model;
     knowledgeEffortSelect.value = effort;
+    syncReasoningOptions(knowledgeModelSelect, knowledgeEffortSelect);
+    knowledgeSettings.effort = knowledgeEffortSelect.value;
   }
 
   function queueKnowledgeSettingsSave() {
+    syncReasoningOptions(knowledgeModelSelect, knowledgeEffortSelect);
     const requested = {
       model: knowledgeModelSelect.value,
       effort: knowledgeEffortSelect.value
@@ -1569,7 +1687,15 @@
   function selectionDetails() {
     const selection = window.getSelection();
     if (!selection || selection.rangeCount !== 1 || selection.isCollapsed) return null;
-    const range = selection.getRangeAt(0);
+    const range = selection.getRangeAt(0).cloneRange();
+    // Rendered glyph offsets cannot address TeX source. Include the complete
+    // formula whenever a selection boundary falls inside it.
+    const boundaryMath = node => (node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement)
+      ?.closest("[data-reader-math-source]");
+    const startMath = boundaryMath(range.startContainer);
+    const endMath = boundaryMath(range.endContainer);
+    if (startMath) range.setStartBefore(startMath);
+    if (endMath) range.setEndAfter(endMath);
     const startElement = range.startContainer.nodeType === Node.ELEMENT_NODE ? range.startContainer : range.startContainer.parentElement;
     const endElement = range.endContainer.nodeType === Node.ELEMENT_NODE ? range.endContainer : range.endContainer.parentElement;
     const startBlock = startElement?.closest("[data-reader-block]");
@@ -1595,9 +1721,11 @@
       const prefix = document.createRange();
       prefix.selectNodeContents(block);
       prefix.setEnd(intersection.startContainer, intersection.startOffset);
-      const start = originalRangeText(prefix).length;
-      total += text.length;
-      selected.push({ block_id: block.dataset.readerBlock, start, end: start + text.length, text });
+      // The API uses Python Unicode code-point offsets, not UTF-16 units.
+      const start = Array.from(originalRangeText(prefix)).length;
+      const length = Array.from(text).length;
+      total += length;
+      selected.push({ block_id: block.dataset.readerBlock, start, end: start + length, text });
     }
     if (!selected.length || total > 20_000) return null;
     return { contexts: selected, rect: range.getBoundingClientRect() };
@@ -1607,6 +1735,9 @@
     const holder = document.createElement("div");
     holder.appendChild(range.cloneContents());
     holder.querySelectorAll(".reader-manual-replacement, .reader-revision").forEach(element => element.remove());
+    holder.querySelectorAll("[data-reader-math-source]").forEach(element => {
+      element.textContent = element.dataset.readerMathSource;
+    });
     return holder.textContent || "";
   }
 
@@ -1619,6 +1750,20 @@
   }
 
   let selectionTimer;
+  function placeSelectionPopup(element, rect) {
+    element.classList.add("is-visible");
+    const margin = 8;
+    const width = element.offsetWidth;
+    const height = element.offsetHeight;
+    const left = Math.max(margin, Math.min(window.innerWidth - width - margin, rect.left));
+    const below = rect.bottom + margin;
+    const top = below + height <= window.innerHeight - margin
+      ? below
+      : Math.max(50, rect.top - height - margin);
+    element.style.left = `${left}px`;
+    element.style.top = `${top}px`;
+  }
+
   function scheduleSelectionMenu() {
     clearTimeout(selectionTimer);
     selectionTimer = setTimeout(() => {
@@ -1629,9 +1774,7 @@
       if (rawRange && selectionTouchesRevision(rawRange)) {
         selectionMenu?.classList.remove("is-visible");
         const rect = rawRange.getBoundingClientRect();
-        selectionNotice.style.left = `${Math.max(8, Math.min(window.innerWidth - 360, rect.left))}px`;
-        selectionNotice.style.top = `${Math.max(50, rect.bottom + 8)}px`;
-        selectionNotice.classList.add("is-visible");
+        placeSelectionPopup(selectionNotice, rect);
         return;
       }
       selectionNotice?.classList.remove("is-visible");
@@ -1640,9 +1783,7 @@
         selectionMenu?.classList.remove("is-visible");
         return;
       }
-      selectionMenu.style.left = `${Math.max(8, Math.min(window.innerWidth - 280, selection.rect.left))}px`;
-      selectionMenu.style.top = `${Math.max(50, selection.rect.bottom + 8)}px`;
-      selectionMenu.classList.add("is-visible");
+      placeSelectionPopup(selectionMenu, selection.rect);
     }, 60);
   }
 

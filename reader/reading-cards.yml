@@ -73,38 +73,38 @@ papers:
 
   moe-switch.md:
     level: "架构分支 · 定向精读"
-    effort: "首读 50–75 分钟；实验与工件第二遍"
+    effort: "首读 65–90 分钟；实验与工件第二遍"
     background: "稠密模型每个 token 激活全部参数，扩大容量会同步增加计算；条件计算试图让参数容量与单 token FLOPs 部分解耦。"
     problem: "通过稀疏专家与路由器让每个 token 只访问少数 FFN expert，并处理负载均衡、容量和分布式通信问题。"
     legacy: "总参数仍要存储，all-to-all、热点专家、丢 token、训练不稳定和服务低 batch 利用率不会因 active parameter 少而消失。"
     team: "主线来自 Google Brain / Google Research 的 Sparsely-Gated MoE 与 Switch Transformer 等工作。"
     impact: "稀疏 MoE 已成为扩展模型容量的重要路线，并影响 Mixtral、DeepSeek 等现代模型，但收益强依赖系统实现。"
     value: "让你会分别核算 total/active parameters、FLOPs、通信和内存，避免把‘只激活少量专家’直接翻译成固定速度倍率。"
-    strategy: "让 `[8,d]` 的 8 个 token 经过 top-1、capacity=4、expert FFN 和 residual，指出 6/2 路由中两个 overflow token 的 task/aux 梯度路径。实验、现代谱系和工件第二遍再读。"
+    strategy: "先用 `[8,d]` 的 8 个 token 走完 router、top-1、capacity、expert FFN 与 residual，再用参数表理解 `capacity_factor`、token drop 和 task/aux 梯度分别改变什么。实验、现代谱系和工件第二遍再读。"
     prerequisites: "Transformer FFN、softmax、分布式通信与负载均衡基础"
 
   moe-routing-load-balancing.md:
     level: "现代架构 · 推荐精读"
-    effort: "首读 60–90 分钟；现代谱系第二遍"
-    background: "Switch 已说明稀疏专家会出现热点、capacity overflow 和通信成本，但现代模型又使用 Expert Choice、无辅助损失均衡、dense checkpoint upcycling、共享/细粒度专家与部署冗余；把它们都叫负载均衡会混淆训练起点、梯度、离散控制和系统放置。"
-    problem: "把 dense-to-expert 初始化、router score、Top-k membership、combine weight、capacity/drop、均衡信号与 expert placement 拆成独立合同，比较 upcycling、辅助损失、Expert Choice 和跨 step bias controller。"
-    legacy: "没有 balance-loss gradient 不等于没有负载控制；复制 dense FFN 不等于 experts 已专业化或无需继续训练；细粒度组合数不证明组合被均匀利用，训练后 shared-path dependence 也不证明其中必然是公共知识；expert count 均匀不保证 device、通信或 tail step 均匀。"
-    team: "综合 Google Research 的 Sparse Upcycling/Expert Choice、DeepSeek 的 DeepSeekMoE/loss-free/V3，以及 Ai2/UW 的开放 OLMoE 与 Qwen2/Qwen3 技术报告。"
-    impact: "现代稀疏 LLM 的关键差异已从是否有 MoE 转向 checkpoint 起点、expert construction、router、controller、capacity 与并行拓扑怎样组合。"
-    value: "做训练或服务评审时，你能判断 dense->MoE 是否真省生命周期算力，定位均衡信号到底进梯度、hard membership 还是 deployment controller，并避免把 upcycling、no-drop 或低 active parameters 当成即时转换/固定吞吐承诺。"
-    strategy: "用同一 4-token score matrix 比较 token-choice 与 expert-choice，再标出 Switch auxiliary gradient、Expert Choice 当批 bucket、Loss-Free 上批 count 到下批 bias 三种控制时钟。现代模型、upcycling 和专业化证据第二遍再读。"
+    effort: "首读 75–105 分钟；现代谱系第二遍"
+    background: "Switch 已说明稀疏专家会出现热点、capacity overflow 和通信成本；后续工作却把控制分别放进辅助梯度、当批 expert bucket、跨步 bias、dropless kernel 和服务侧 placement。把这些方法都叫负载均衡，会混淆模型学习、离散 membership、执行容量和设备调度。"
+    problem: "把 router score、Top-k membership、combine weight、capacity/drop、均衡信号与 expert placement 拆成独立合同，比较 Switch 辅助损失、Expert Choice、跨 step bias controller、MegaBlocks 与 DeepSeek-V3 分别改变什么。"
+    legacy: "没有 balance-loss gradient 不等于没有负载控制；Expert Choice 的固定 bucket 可能产生 future-token leakage；dropless 不等于 router 均衡，expert count 均匀也不保证 device、通信或 tail step 均匀。"
+    team: "综合 Google Research 的 Switch、ST-MoE 与 Expert Choice，DeepSeek 的 loss-free balancing / V3，以及 MegaBlocks 的 dropless execution；各论文解决的是不同接口。"
+    impact: "现代稀疏 LLM 的差异不只在 Top-k，而在均衡信号何时生效、是否进入梯度、容量怎样执行，以及训练路由和服务 placement 是否分离。"
+    value: "做训练或服务评审时，你能定位均衡信号到底进 router gradient、hard membership 还是 deployment controller，并避免把 no-drop、均匀 expert count 或低 active parameters 当成固定吞吐承诺。"
+    strategy: "先用同一 4-token score matrix 区分数量负载、计算负载和设备负载，再标出 Switch 辅助梯度、Expert Choice 当批 bucket、Loss-Free 上批 count 到下批 bias 三种控制时钟。现代模型、dropless execution 与部署边界第二遍再读；专家扩容和专业化统一进入下一篇。"
     prerequisites: "先读 Sparse MoE 与 Switch，并理解 Top-k、capacity、all-to-all 和 expert parallel"
 
   moe-expert-upcycling-granularity.md:
     level: "现代架构 · 工程专题精读"
-    effort: "首读 75–120 分钟；转换实验与系统 profiling 第二遍"
+    effort: "首读 95–145 分钟；转换实验与系统 profiling 第二遍"
     background: "已有 MoE checkpoint 的 SFT 收益有限时，一个自然候选是沿 expert intermediate dimension 切分权重、增加专家数量，再用 continued pretraining 让子专家分化；但切分会同时改变路由组合、每 expert 数据量、GEMM shape 和通信。"
     problem: "把 expert 数量、单专家宽度、Top-k、shared active budget、权重缩放和训练 tokens 拆成独立变量，判断 dense-to-MoE/upcycling 初始化是否保函数、怎样打破父子对称、何时粒度过细，以及如何为 Qwen3-Coder 设计 matched 实验。"
     legacy: "权重切分本身不创造新知识；普通全局 Top-k 可能破坏父 expert 的 combine mass，短 SFT 常不足以训练新增专家，shared expert 的收益也不是跨 recipe 定律。"
     team: "综合 DeepSeekMoE、Sparse Upcycling、Qwen2、OLMoE、Granular Upcycling 与最新 Expert Upcycling/Slicing and Dicing 方向；后两篇为新预印本，不能替代 Qwen3-Coder matched 实验。"
     impact: "它把‘128 变 256’从一个模糊结构改动变成可归因的容量/粒度/active-compute实验，并给出父组路由、teacher KL、CPT、SFT、expert health 和 all-to-all tail 的完整验收合同。"
     value: "读完可以判断一次专家扩容到底增加了总容量、改变了粒度、减少了每 expert 数据，还是只是改变了 active FLOPs；也能把 shared on/off 作为独立 matched 轴，而不是把现代模型配置当作普遍最优答案。"
-    strategy: "先手算 `3*h*I`、`T*K/N` 和 128/Top-8/768 到 256/Top-16/384 的账本；再读权重切分与父组路由，最后比较 A/B/C/D 配置和停止条件。论文中的小模型或新预印本数字不要直接外推到 30B Coder。"
+    strategy: "先读‘扩容同时改变四本账’，手算 `3*h*I`、`T*K/N` 和 128/Top-8/768 到 256/Top-16/384 的差别；再检查函数保持、父子分化和 continued pretraining，最后比较 A/B/C/D 配置与停止条件。论文中的小模型或新预印本数字不要直接外推到 30B Coder。"
     prerequisites: "先读 Sparse MoE 与 Switch、MoE 路由与负载均衡，并理解 SwiGLU 权重 shape、Top-k、continued pretraining 与 all-to-all"
 
   mixture-of-depths.md:
@@ -180,16 +180,16 @@ papers:
     prerequisites: "BERT hidden、pooling、cosine/softmax、基础检索；DPR 不是前置，本页会为它建立双编码器与 negative 直觉"
 
   embedding-models-lineage-selection.md:
-    level: "Embedding 谱系 · 推荐精读"
-    effort: "首读 15–20 分钟；第二遍 75–120 分钟"
-    background: "LLM backbone 能产生上下文 hidden，但可检索 embedding 还需要稳定的 readout、相似度几何、负样本分布和可重放索引；MTEB 任务/语言多样，不能由单一榜单替代生产合同。"
-    problem: "沿 SBERT、DPR、E5、GTE、C-Pack/BGE、BGE-M3、M3E、Qwen3 Embedding 与 Codestral Embed 建立可验证谱系，并区分论文、模型卡/仓库和产品文档证据。"
-    legacy: "MTEB/STS/CodeSearchNet 不等于真实 Recall@K、下游 reader 或 P99；M3E 当前没有定位到方法论文，Codestral Embed 当前只有官方 API/cookbook 证据。"
-    team: "覆盖 Sentence-Transformers、Google、Alibaba/Qwen、BAAI、Mistral 等公开论文/产品线；机构归属不替代证据等级。"
-    impact: "把 embedding 从“最后一层平均”改写为 readout、similarity、data/negative、index、metric 的组合接口，为后续文本/LLM/code 专题提供共同坐标。"
-    value: "读完能回答一个模型究竟适合 single-vector、dense+sparse、multi-vector 还是 reranker，以及为什么没有一个 MTEB 分数能替你选择索引和 SLO。"
-    strategy: "先用 100 万 chunk 算 768/4096 维 FP16 payload，并分开 checkpoint、向量矩阵、ANN index 和 RAG 指标；FAISS、MTEB、模型谱系与产品证据放第二遍。"
-    prerequisites: "SBERT/SimCSE、DPR、cosine/ANN、Recall@K；不要求先会具体向量数据库"
+    level: "主线合并专题 · 原理与近期研究"
+    effort: "分三次阅读：基础 90 分钟；发展 90 分钟；评测 45 分钟"
+    background: "原句向量、通用训练、LLM 编码器、模型谱系与代码检索分散在五篇文章；本篇按同一计算图连续编排。"
+    problem: "解释表示、相似度、训练数据、损失与索引的关系，串联 SBERT/SimCSE、E5/BGE、Qwen3，并核验截至 2026-09-14 的近期方向。"
+    legacy: "相似不等于相关；长窗口不保证局部证据召回；近期预印本的同协议结果不等于业务最优；本次未运行模型基准。"
+    team: "综合 SBERT/SimCSE、Microsoft E5、BGE、Qwen、Jina、Google EmbeddingGemma 及近期检索研究团队的原文；不是单一团队报告。"
+    impact: "将五篇旧文核心方法合并，并新增 12 篇固定原文，涵盖蒸馏压缩、长文本、多模态、多向量理论、推理和记忆评测。"
+    value: "在一页完成从编码原理到实际选型的系统阅读，并能为 knowledge_factory 制定可复核的检索实验。"
+    strategy: "先手算第 1 章的分数与 loss，读 2–4 章历史；再读 5–9 章近期方向，用 10–11 章设计同预算对照。原文入口见第 12 章。"
+    prerequisites: "BERT/Transformer hidden state、点积与 softmax 的直觉；DPR 和 ColBERT 完整实验作为延伸阅读"
 
   general-text-embedding-training.md:
     level: "Embedding 训练 · 推荐精读"
@@ -253,37 +253,37 @@ papers:
 
   arxiv-2005.14165.md:
     level: "GPT 谱系转折 · 深度精读"
-    effort: "首读 70–100 分钟；GPT-1/2/4、污染与工件第二遍"
-    background: "GPT-1 把生成式预训练接到任务监督微调，GPT-2 开始把任务写成文本续写；到 GPT-3，真正待验证的是规模能否把这种文本接口扩成跨任务的 zero/one/few-shot 行为。"
-    problem: "把 GPT-3 放回 GPT-1→2→3→4 的证据链：分清任务信息来自梯度还是 context，检验规模化 ICL 的任务异质性，并比较能力增长与机制披露是否同步。"
-    legacy: "上下文学习不保证可靠推理或事实性；训练数据污染、偏见、成本、prompt 敏感性和真实可复现性仍显著；GPT-4 又扩大了能力证据与训练机制透明度之间的落差。"
-    team: "以 Brown 等人的 NeurIPS 2020 GPT-3 论文为主证据；OpenAI 的 GPT-1/2 官方技术报告提供前史，GPT-4 Technical Report 只用于后继与披露边界。"
-    impact: "GPT-3 将 scaling 与 in-context learning 推到研究和产业中心；连读全系列后，更能看清这不是单纯参数榜，而是任务接口、发布方式和证据合同持续变化。"
-    value: "既能区分参数学习与上下文条件行为，也能判断一份模型报告究竟披露了机制、规模趋势、任务协议、系统安全还是只有整模结果。"
-    strategy: "先读 GPT-1/2/3/4 对照表，再用同一 checkpoint 对比预训练与上下文学习两只时钟；抽查 GPT-3 的正反任务，最后按延伸路线补 scaling、InstructGPT、GPT-4 与评测合同。"
-    prerequisites: "已读 Seq2Seq/GPT 谱系与 causal LM；理解 few-shot evaluation、基本 scaling 和 fine-tuning"
+    effort: "首读 45–70 分钟；污染、目标缺陷与工件第二遍"
+    background: "GPT-1 把生成式预训练接到任务监督微调，GPT-2/3 把任务逐步迁到文本上下文；GPT-4 Technical Report 则提供后继能力、predictable scaling 与披露边界的固定原始证据。"
+    problem: "把 GPT-3 的 scale × ICL 实验矩阵与 GPT-4 报告的 loss/capability scaling 对照，分清任务信息来自梯度、context 还是 evaluator，并明确哪些训练字段没有公开。"
+    legacy: "上下文学习不保证可靠推理或事实性；训练数据污染、偏见、成本、prompt 敏感性和真实可复现性仍显著。GPT-4 报告也没有披露参数规模、架构、硬件、训练计算、数据构造和训练方法。"
+    team: "GPT-3 机制以 Brown 等人的 NeurIPS 2020 论文为主；GPT-4 Technical Report 使用 OpenAI 官方 arXiv v1 本地 PDF、文本和元数据，后半部分包含随报告发布的 system card。"
+    impact: "GPT-3 将 scaling 与 in-context learning 推到中心；GPT-4 把研究重点推进到可预测性、RLHF 后行为、能力评测和安全证据，同时让训练透明度边界成为结论的一部分。"
+    value: "能区分参数学习与上下文适应，复述 GPT-4 的 `L(C)=aC^b+c` 预测流程，并判断技术报告中的 benchmark、system card 和未披露字段各自能支持什么。"
+    strategy: "先读 GPT-3 的任务接口和本页 GPT-4 精读段落，再亲读本地 `arxiv-2303.08774v1/paper.pdf` 的 pp.1–5、6–21 和 Appendix；最后回查污染、目标缺陷与工件边界。"
+    prerequisites: "已读 Seq2Seq/GPT 谱系与 causal LM；理解 few-shot evaluation、scaling、fine-tuning、loss scaling 和评测合同"
 
   arxiv-2204.02311.md:
     level: "系统化案例 · 定向精读"
-    effort: "首读 50–75 分钟；系统细节第二遍"
-    background: "超大模型能力不仅取决于参数量，还依赖数据混合、并行系统、训练稳定性与评测；单一架构描述无法解释完整训练工程。"
-    problem: "展示 540B dense Transformer 如何在 Pathways 系统上训练，并系统评估规模带来的跨任务能力与局限。"
+    effort: "首读 60–90 分钟；SwiGLU 谱系与系统细节第二遍"
+    background: "Scaling law 把一次训练压成 `(N,D,C,loss)`，却没有说明 540B 参数和 780B token 怎样跨设备执行、怎样保持数值稳定、故障后从什么状态恢复；同时，现代模型反复出现的 SwiGLU 也不能只记成 PaLM 的组件名。"
+    problem: "展示 540B dense Transformer 如何在 Pathways 系统上训练，并把 SwiGLU 从 GLU/T5 的前因、同参实验和采用边界，连同数据、状态所有权、并行通信、数值恢复与 benchmark 放回同一实验合同。"
     legacy: "训练数据、成本和实现并不完全可复现；规模收益仍伴随偏见、记忆、毒性、推理不稳定和高服务成本。"
     team: "Google Research / Pathways 团队的大型协作项目，由 Chowdhery 等人报告。"
     impact: "PaLM 是超大 dense 模型时代的重要系统与能力报告，也推动了对 scaling、emergent behavior 和训练基础设施的讨论。"
-    value: "让你把模型架构、数据、并行、硬件、稳定性和 benchmark 当成一份共同实验合同，而不是孤立模块。"
-    strategy: "第一遍跟一个 batch 走完 2048-token block、分片前向、CE+z-loss、跨 pod 梯度和更新；用模型/数据/并行/稳定性/评测五本账收尾。"
-    prerequisites: "Transformer、规模与预训练评测；数据并行/模型并行在下一阶段补齐"
+    value: "推荐它作为大模型系统报告范例：跟一个 batch 走完，同时把 `FFN -> GLU -> SwiGLU -> PaLM` 的时间线和模型/数据/并行/稳定性/评测五本账分开，避免把整模结果归因给单个组件。"
+    strategy: "第一遍先读 PaLM 的 batch 路径，再读 2.1 的 SwiGLU 四步和 `3072→2048` 同参账；第二遍回查 Shazeer Tables 1–4、PaLM §§2–5 与工件边界。"
+    prerequisites: "Transformer FFN、规模与预训练评测；数据并行/模型并行在下一阶段补齐"
 
   arxiv-2302.13971.md:
     level: "开源路线经典 · 推荐精读"
     effort: "首读 45–70 分钟；复现工件按需回查"
-    background: "研究通常追求给定训练算力下的最优模型，但部署者更关心在长期推理预算下，较小模型能否靠更多数据获得更好性价比。"
-    problem: "训练一组相对较小但数据更充足的基础模型，在控制推理成本的同时达到有竞争力的性能，并开放研究使用。"
+    background: "PaLM 说明超大 dense run 怎样完成；部署者还要问达到目标质量后，较小模型能否用更多一次性训练 token 换取更低的长期推理成本。"
+    problem: "训练一组相对较小但数据更充足的基础模型，在控制推理成本的同时达到有竞争力的性能，并逐项审计公开来源、代码、权重、tokenizer 与可复现语料。"
     legacy: "训练语料治理、许可证、事实性、对齐和安全仍未解决；小模型多训练也不意味着任意任务或服务成本都更优。"
     team: "Touvron 等人的 Meta AI / FAIR 团队工作，LLaMA 1 开启了后续 Llama 系列。"
     impact: "显著推动高质量开放权重 LLM 生态，并强化了 inference-optimal 与 compute-optimal 目标不同的工程认识。"
-    value: "训练你从生命周期总成本看模型大小和 token 数，而不是只看参数量；也适合学习数据配方的审计方式。"
+    value: "推荐它作为 scaling 到产品决策的桥：它同时训练生命周期成本意识和‘开源’对象分层意识，能解释为什么小模型更便宜只是条件性判断。"
     strategy: "只跟 LLaMA-7B：用 N、D、训练 FLOPs 和服务请求量 Q 分开训练账与推理账，再用 TriviaQA 检查同表数字是否同一评测合同。"
     prerequisites: "causal LM、scaling laws、基本 benchmark 与推理成本概念"
 
@@ -302,13 +302,13 @@ papers:
   scaling-kaplan-chinchilla.md:
     level: "训练决策地基 · 深度精读"
     effort: "首读 60–90 分钟；手算一次同预算比较"
-    background: "模型、数据和训练算力都能降低 loss，但资源有限；早期大型模型常在参数规模很大时使用相对不足的数据。"
-    problem: "用经验幂律描述 loss 随参数、数据和算力变化，并推导固定训练预算下模型大小与 token 数如何分配。"
+    background: "Hestness（2017）已在四个领域观察到可预测的经验曲线，Sutton（2019）把持续利用计算的通用方法总结为 Bitter Lesson；GPT-3 又展示规模能改变 in-context learning，却没有回答下一次训练该买多少参数、喂多少 token。"
+    problem: "用经验幂律、matched horizon 和 IsoFLOP 比较把训练选择写成受约束的预算决策，并说明为什么 pretraining loss 最优不等于下游或生命周期最优。"
     legacy: "幂律只在观测分布和规模区间内成立；数据质量、重复、多 epoch、下游能力、推理成本和新架构会改变最优点。"
-    team: "综合 OpenAI 的 Kaplan scaling laws 与 DeepMind 的 Chinchilla / compute-optimal training 工作。"
+    team: "以 Hestness 的跨领域经验研究和 Sutton 的思想性总结为背景，主线综合 OpenAI 的 Kaplan scaling laws 与 DeepMind 的 Chinchilla / compute-optimal training 工作。"
     impact: "改变了业界训练预算分配方式，并促使许多模型从‘参数优先’转向更充分的数据训练。"
-    value: "让你能对训练计划提出数量级正确的问题：预算、参数、token、FLOPs 和目标究竟如何绑定。"
-    strategy: "先复算页面开头 A/B/C 三组 N、D 和 6ND，再根据同配方 final loss 选谷底；始终把语言模型 loss 与训练后拟合 scaling law 的 loss 分开。"
+    value: "推荐先读它，因为后面的 PaLM、LLaMA 和评测都要复用同一判断：预算约束是什么、观测指标是什么、外推边界在哪里，而不是只记住 20 tokens/parameter。"
+    strategy: "先读 Hestness/Sutton 的历史段落，区分思想背景与可计算证据；再复算页面开头 A/B/C 三组 N、D 和 6ND，根据同配方 final loss 选谷底；始终把语言模型 loss 与训练后拟合 scaling law 的 loss 分开。"
     prerequisites: "对数、幂律、训练 FLOPs、validation loss 与简单优化"
 
   tokenization-data-curation.md:
@@ -325,14 +325,14 @@ papers:
 
   adam-adamw.md:
     level: "优化地基 · 精读"
-    effort: "首读 45–70 分钟；Adafactor 与实验第二遍"
+    effort: "首读 65–95 分钟；Adafactor 与实验第二遍"
     background: "不同参数的梯度尺度、稀疏性与噪声不同，单一 SGD 步长难兼顾；把 L2 项直接加入自适应梯度又会改变其收缩语义。"
     problem: "Adam 用梯度一阶和平方梯度矩进行逐参数预条件；Adafactor 把矩阵二阶状态因子化以降低 persistent memory；AdamW 再把权重衰减从自适应 loss-gradient path 中解耦。"
     legacy: "收敛与泛化不由优化器名字保证；epsilon、状态精度、schedule、clip、参数排除和分布式 reduction 仍会改变真实更新。"
     team: "Adam 由 Diederik Kingma、Jimmy Ba 提出；Adafactor 由 Noam Shazeer、Mitchell Stern 提出并发表于 ICML 2018；AdamW 由 Ilya Loshchilov、Frank Hutter 提出，分别成为 ICLR 经典工作。"
     impact: "AdamW 已成为 Transformer/LLM 训练最常见的优化器基线之一，其状态与显存成本也塑造了训练系统设计。"
     value: "帮你从逐元素状态更新理解 optimizer，而不是背默认超参；排查训练不稳、复现实验或估算显存时都直接有用。"
-    strategy: "固定 `theta=1.0, g=2.0`，先算首步 `m/v`、bias correction 和参数位移，再把 L2 的 `lambda*theta -> gradient -> m/v` 与 AdamW 的独立收缩画成两条线。Adafactor、旧实验和框架差异第二遍再读。"
+    strategy: "先读‘优化器究竟改变什么’和两个参数的首步例子，明确 `lr`、`beta1`、`beta2`、`eps` 各自影响的行为；再算 `theta=1.0, g=2.0` 的 `m/v`、偏差校正和参数位移，最后把 L2 与 AdamW 画成两条路径。Adafactor、旧实验和框架差异第二遍再读。"
     prerequisites: "完成公式桥的一步参数更新即可；只需知道 `theta` 是可训练数字集合、gradient 指向局部变化，EMA、正则项、L2 与 weight decay 会从同一数值例重新解释"
 
   arxiv-2106.09685.md:
@@ -361,38 +361,38 @@ papers:
 
   megatron-zero.md:
     level: "训练系统 · 定向深读"
-    effort: "首读 60–90 分钟；算一次 8 卡状态账"
+    effort: "首读 75–110 分钟；算一次 8 卡状态账"
     background: "模型参数、梯度、优化器状态和 activation 超出单卡容量；普通 data parallel 会复制大部分状态，单靠增加 GPU 不能自动扩展。"
     problem: "Megatron 用张量/流水线等模型并行拆计算，ZeRO 在数据并行组中分片 optimizer、gradient 和 parameter ownership。"
     legacy: "分片会引入通信、重物化、bucket/prefetch 和拓扑依赖；‘能放下’不等于 step 快、扩展效率高或可稳定恢复。"
     team: "Megatron-LM 主线来自 NVIDIA；ZeRO 来自 Microsoft Research / DeepSpeed 团队。"
     impact: "两条路线共同奠定超大模型分布式训练的核心术语、状态账本与工程实现。"
     value: "让你能精确回答‘切了什么、何时聚合、谁持有状态’，避免只会按 ZeRO stage 或并行缩写选配置。"
-    strategy: "延续 `theta=1.0`，先让两个 rank 的本地梯度 `1/3` 归约为 `2`，标出 parameter、gradient、`m/v`、activation 和通信 buffer 的 owner 与存活区间。GPipe、Megatron 算子切分和性能数字第二遍再读。"
+    strategy: "先用 `theta=1.0` 的两卡例子区分参数、梯度、`m/v`、activation 与通信 buffer，再对照 DP、TP、PP 和 ZeRO 的所有权变化，最后让两个 rank 的本地梯度 `1/3` 归约为 `2`。GPipe、Megatron 算子切分和性能数字第二遍再读。"
     prerequisites: "data parallel、all-reduce、Transformer 参数构成、训练 step"
 
   training-numerical-stability.md:
     level: "训练工程 · 深度精读"
-    effort: "首读 60–90 分钟；高级案例第二遍"
+    effort: "首读 90–125 分钟；高级案例第二遍"
     background: "大规模低精度训练会把初始化、归一化、softmax、reduction、optimizer state、loss scaling 与故障恢复的微小差异放大。"
     problem: "建立 precision map 与稳定性审计框架，解释 overflow、underflow、loss spike 和不可恢复状态怎样产生及如何定位。"
     legacy: "不存在跨模型通用的单一稳定配方；更高精度和更多监控增加成本，恢复策略也可能掩盖根因或改变训练轨迹。"
     team: "综合多家大模型团队和训练框架的论文与固定工件，是跨来源工程专题。"
     impact: "这类知识决定大模型训练能否真正跑完，虽然引用声量不一定像架构论文，却具有极高实践影响。"
     value: "对训练和调参直接有用：你会把 dtype、归约、clip、step、checkpoint 和异常恢复写进实验 identity。"
-    strategy: "用同一 batch 走完 `scale -> finite check -> unscale -> reduce -> global clip -> optimizer`，再画一次 overflow 后禁止推进的状态。LayerNorm、QK 控制器、FP8、Muon 和历史案例第二遍再读。"
+    strategy: "先用十进制小梯度理解上溢、下溢、有效位数和 loss scaling，再让同一 batch 走完 `scale -> finite check -> unscale -> reduce -> global clip -> optimizer`，按‘第一个非有限张量 + 哪个时钟推进’定位故障。LayerNorm、QK 控制器、FP8、Muon 和历史案例第二遍再读。"
     prerequisites: "浮点数、mixed precision、AdamW、分布式 reduction、训练日志"
 
   arxiv-1707.06347.md:
-    level: "强化学习基础 · 定向精读"
-    effort: "首读 50–75 分钟；GAE 与实验第二遍"
+    level: "强化学习地基 · 深度精读"
+    effort: "原理 60–90 分钟；LLM/Agent 与对比再读 40–60 分钟"
     background: "policy gradient 可用采样轨迹优化策略，但多次复用旧轨迹会产生分布偏移；TRPO 的信赖域约束实现复杂。"
-    problem: "用 clipped probability ratio 等简单 surrogate 限制策略单次更新幅度，在样本复用和训练稳定之间折中。"
+    problem: "通过新旧动作概率比与裁剪削弱有利方向的过度更新，让同一批经历可以进行多轮一阶优化。"
     legacy: "clip 不是严格信赖域保证；advantage、value、采样策略与实现细节会改变优化，迁移到 token-level LLM 后问题更多。"
     team: "Schulman 等人的 OpenAI 团队工作，发表于 2017 年。"
     impact: "PPO 长期成为深度强化学习和早期 RLHF 的主力基线，影响 InstructGPT 等大模型对齐流程。"
-    value: "帮你读懂 pi_old、ratio、advantage、value 和 clip 各自做什么，并避免把 PPO 简化成一个 loss 名称。"
-    strategy: "用同一条两动作 rollout 走完 reward、advantage、old/current ratio、clip、`K` 个 epoch 与快照刷新；指出 clip 只截断有利越界的局部激励。GAE、实验与 LLM 迁移第二遍再读。"
+    value: "从策略梯度和 GAE 手算到完整更新，解释 PPO 的缺陷，并定位 GRPO、RLOO、DPO 及 Agent RL 究竟替换了哪个环节。"
+    strategy: "以创建备份、校验、恢复演练三步任务贯穿 reward、GAE、value target 和 clip；再接入 token mask、两种 KL、长程归因与异步行为版本。最后用原论文实验和预算匹配判断后续算法的改进。"
     prerequisites: "softmax、对数、梯度更新；读过公式阅读桥即可，策略梯度、advantage 和 importance ratio 本页从两动作数值例开始"
 
   neurips-2022-instructgpt.md:
@@ -409,26 +409,26 @@ papers:
 
   preference-reward-overoptimization.md:
     level: "对齐风险 · 深度精读"
-    effort: "首读 60–90 分钟；历史与工件第二遍"
+    effort: "原理与过优化 70–100 分钟；实现与历史按需回查"
     background: "人类偏好难直接作为可微目标，RLHF 用有限比较数据拟合 reward model；策略优化会主动搜索其高分区域。"
     problem: "解释偏好比较如何变成 scalar reward，以及 policy 为什么会放大奖励模型误差并产生 reward overoptimization。"
     legacy: "更好的 RM、KL 或在线数据只能缓解而非证明真实目标一致；分布外行为、评审偏差和可扩展监督仍是开放问题。"
     team: "综合 OpenAI、Anthropic 及多所研究机构关于偏好建模、过优化与宪法式监督的工作。"
     impact: "Goodhart 风险已成为后训练设计的中心问题，直接影响数据刷新、regularization、评测和上线监控。"
     value: "让你不把 reward 上升误当能力上升；设计 DPO/RL、judge 或反馈闭环时，能主动寻找代理被钻空子的路径。"
-    strategy: "固定同一 KL prompt 与 A/B 回答，依次标出偏好标签、BT loss、`theta_RM` 更新、冻结 RM 后的 `theta_policy` 更新和 shifted candidate 的独立 gold 审计。历史闭环、现代训练器和工件第二遍再读。"
+    strategy: "沿用数据库备份任务，手算 BT 梯度、分数平移与缩放，再用三类回答和三种策略分布算出 proxy 上升而真实质量下降；结合 Gao 曲线理解停止位置，最后核对在线刷新与 Swift 的 margin/中心化。"
     prerequisites: "概率、softmax/交叉熵、基本采样与分布直觉；成对奖励模型和 RLHF 闭环由本页从两轨迹数值例开始"
 
   reward-verifier-policy-learning.md:
     level: "后训练坐标系 · 核心精读"
-    effort: "首读 45–60 分钟；八篇原文路线第二遍"
+    effort: "监督与搜索 50–70 分钟；训练与 Agent 再读 30–45 分钟"
     background: "ORM、PRM、偏好 RM、best-of-N、MCTS、PPO、DPO 和 GRPO 经常同时出现，但它们分别描述标签、评分器、搜索或策略更新，不能按一个 reward 名称合并。"
     problem: "用同一道数学题统一解释 reward/verifier 怎样训练、分数怎样进入选择或梯度，以及 on/off-policy 在内层优化与外层数据刷新中分别意味着什么。"
     legacy: "任何 learned reward 都可能被搜索和更新放大误差；自动过程标签依赖 completer/checker，公开的 Llama 3.1 报告也没有披露可复建的 step-RM/MCTS 配方。"
     team: "综合 OpenAI、Google DeepMind、ACL Math-Shepherd、MCTS-DPO 与 ICLR ILQL 等一手论文，是跨方法训练合同专题。"
     impact: "建立现代 LLM 后训练的共同对象和时钟语言，使 ORM/PRM、RLHF、direct preference、reasoning RL 与 offline RL 可以在同一图上严格比较。"
     value: "读完可以独立判断一段代码或论文究竟只在重排、做 SFT、做 policy gradient、刷新偏好数据，还是在固定日志上学习 Q/V。"
-    strategy: "先比较 `17+26` 的正确轨迹与错误抵消轨迹，再操作六模式时钟切换器；每次只回答样本谁生成、谁评分、谁接梯度、何时刷新。公式与八篇论文路线第二遍再读。"
+    strategy: "以 `17+26` 区分结果、过程与补全可达性，手算自动标签、步骤归约和搜索覆盖；保留六模式切换器，再接入备份 Agent，解释分数怎样变成 SFT、策略梯度或偏好对，以及稠密奖励为何可能改变目标。"
     prerequisites: "causal LM、交叉熵、采样与 CoT/自一致性；BT、advantage、PPO、DPO 和 Q-learning 均由本页从对象与数值例重新建立"
 
   process-supervision-test-time-search.md:
@@ -481,14 +481,14 @@ papers:
 
   reasoning-rl-reductions.md:
     level: "快速演化前沿 · 定向深读"
-    effort: "首读 60–90 分钟；方法谱系第二遍"
-    background: "推理模型使用同 prompt 多次 rollout 和 outcome reward 训练，但 question、response、token 的权重会被 baseline、标准化、ratio 和 denominator 悄然改变。"
-    problem: "统一拆解 GRPO、DAPO、GSPO 等方法的 advantage、importance ratio、clip 与 reduction，揭示同名 trainer 背后的真实优化单位。"
+    effort: "首读 60–90 分钟；实现附录按需查阅"
+    background: "验证器能从候选中选出好答案后，下一步是更新模型，让它更容易直接生成好答案；由此进入可验证奖励的推理强化学习。"
+    problem: "解释最终对错怎样进入 token 梯度，为什么用组内比较替代 critic，以及长推理中的权重、探索和更新稳定性问题。"
     legacy: "公开方法仍在快速迭代，复现依赖 rollout 系统、数据与 verifier；更长推理、reward exploitation 和训练 population shift 尚未解决。"
     team: "覆盖 DeepSeek、字节跳动、Qwen/阿里等团队及相关开源实现，是快速变化的跨论文专题。"
     impact: "代表 2024–2026 reasoning RL 的重要方法线，但结论成熟度低于 Transformer、PPO 或 DPO 等经典工作。"
     value: "如果你要实现或评审推理 RL，它能防止 denominator、detach、clip unit 等细节在不知不觉中改掉算法。"
-    strategy: "先用题 A 的长度 `2/8`、奖励 `1/0` 比较 per-response 与 pooled-token 分母，再处理题 B 的 zero-variance group，并填写 old/current/reference/verifier 时钟。实际使用哪种 trainer，再第二遍回查对应方法。"
+    strategy: "先读论文地图和一次训练流程，再沿 RLOO/GRPO、R1、Dr.GRPO、DAPO、GSPO/SAPO 理解问题如何演变；重点复算长度权重、DAPO 递进实验与 pass@k 反例，实现与版本附录按需查阅。"
     prerequisites: "PPO/DPO、policy gradient、importance sampling、token/sequence reduction"
 
   instruct-model-effective-post-training.md:
@@ -554,12 +554,12 @@ papers:
   evaluation-effective-context.md:
     level: "通用必读 · 深度精读"
     effort: "首读 50–75 分钟；重放一道题的评分链"
-    background: "LLM 分数同时受样本 population、prompt、few-shot、decode、parser、judge 与 aggregation 影响；同一模型并不存在脱离协议的单一能力分数。"
-    problem: "把 benchmark 分数还原成可重放的观测合同，解释 MMLU、HELM、LLM judge、污染、emergence 与有效上下文中的测量偏差。"
+    background: "12--14 已分别讨论预算、系统和生命周期，但‘达到同等质量’仍没有定义；LLaMA 的 TriviaQA 反例显示同一张表也可能混用 split、prompt、decode 和 parser。"
+    problem: "把 benchmark 分数还原成可重放的观测合同，并区分业务目标、评测 estimand 与有限样本 estimate，解释 MMLU、HELM、LLM judge、污染、emergence 与有效上下文中的测量偏差。"
     legacy: "开放任务缺少完美 scorer，judge 也会偏置或被操纵；覆盖率、成本、时效性和现实效度之间仍需取舍。"
     team: "综合 Stanford HELM、MMLU 及多家机构的评测、污染和长上下文研究，不对应单一团队。"
     impact: "评测方法决定模型、训练和产品决策是否可信；它的实践价值不亚于任何单篇模型论文。"
-    value: "这是通用工程师值得优先精读的专题之一，能显著减少错误榜单比较、指标优化和上线误判。"
+    value: "推荐把它作为 12--15 的收口篇：它提供后续 RLHF、Agent 和系统论文都能复用的共同尺子，减少把分数差当能力差、把 judge 偏好当真值或把窗口数字当有效上下文的误判。"
     strategy: "先把 `2+3` 依次走过 sample、checkpoint、prompt、decode、parser、judge 和 aggregation；再区分标称窗口、测试长度与有效长度，其余证据第二遍回查。"
     prerequisites: "基础统计、benchmark、采样解码、precision/recall 与实验设计"
 
@@ -588,16 +588,16 @@ papers:
     prerequisites: "softmax、条件概率与 tokenizer 基本直觉；页面会从数值例继续解释熵、序列分数、自动机支持集和候选聚合"
 
   knowledge-distillation-autoregressive.md:
-    level: "专项方法 · 选读"
-    effort: "首读 50–75 分钟；历史对照第二遍"
-    background: "大模型部署昂贵，教师模型可能通过完整概率、生成响应或交互式反馈向较小学生传递比 one-hot 标签更丰富的信号。"
-    problem: "区分 logit distillation、sequence-level KD 与学生前缀上的生成式反馈，明确教师 target、前缀来源和梯度路径。"
-    legacy: "学生容量限制、teacher 偏差和 exposure mismatch 仍在；生成 hard response 会丢掉概率信息，在线反馈又显著增加成本。"
-    team: "综合 Hinton 等人的经典 KD、Sequence-Level KD 以及后续自回归蒸馏团队的多条研究线。"
-    impact: "知识蒸馏是模型压缩与小模型训练的长期基础方法，在 LLM 合成数据与 teacher–student 训练中持续演化。"
-    value: "帮你审计‘蒸馏’到底复制了 logits、答案还是轨迹，避免不同算法共享名称却优化完全不同对象。"
-    strategy: "固定“巴黎是法国的”、一个 frozen teacher 和一个 student，重算四词表软目标，再比较 Word-KD、SeqKD、on-policy GKD 的前缀生产者、监督工件与解码时钟。Scheduled Sampling、DAgger、MRT 和现代案例第二遍再读。"
-    prerequisites: "softmax 与交叉熵；温度、KL、教师强制和自回归前缀均在本页结合数值路径解释"
+    level: "专项方法 · 算法工程深读"
+    effort: "首读 90–140 分钟；OPSD 反例与实现合同第二遍"
+    background: "大模型或长推理策略部署昂贵；除了压缩外部 teacher，现代 reasoning post-training 还尝试把参考解、验证结果和工具反馈转成学生真实轨迹上的 dense token signal。"
+    problem: "统一区分 soft/logit KD、SeqKD、GKD/OPD、OPSD、SDPO 与 U-OPSD，明确 rollout 人口、privileged context、teacher 刷新、KL 方向、stop-gradient、显存和长程 credit。"
+    legacy: "On-policy 只缓解状态分布偏移，不能保证 privileged teacher 在错误长轨迹上给出正确 recovery；完整词表信号昂贵，hindsight/style bias 还可能只压缩 thinking。"
+    team: "从 Hinton KD、Sequence-Level KD、MiniLLM/GKD 延伸到 OPSD、SDPO、β-OPSD、U-OPSD 及其 thinking-enabled 反证。"
+    impact: "OPSD 系列把蒸馏从模型压缩推进到 reasoning/agent post-training，连接 dense imitation、RLVR credit assignment、环境反馈和无标签 self-consistency。"
+    value: "读完能手写同前缀双条件分布、算 full-V logits 显存、审计 fixed/EMA teacher，并解释为什么 dense loss 可能变短却不变对。"
+    strategy: "先用四词表重算 `q-p`，再在交互实验台切换 SeqKD/GKD/OPSD/SDPO/U-OPSD/β-OPSD；精读 OPSD 正结果与 incorrect-only 反例，最后手算 `2BTVs` 和 reference-to-teacher 插值。"
+    prerequisites: "softmax、交叉熵、KL、teacher forcing 与 causal rollout；policy gradient、LoRA 和分布式 ownership 有帮助但正文会给出必要公式"
 
   arxiv-2403.05530.md:
     level: "长上下文案例 · 研究选读"
@@ -637,15 +637,15 @@ papers:
 
   deepseek-v2-v3-r1-lineage.md:
     level: "现代模型谱系 · 推荐精读"
-    effort: "首读 20–30 分钟；第二遍 90–150 分钟"
-    background: "DeepSeek-V2、V3 与 R1 的固定证据已分布在现代 block、MoE、V3、蒸馏和推理强化学习专题中，但按模型名进入时，容易把报告发布日期、checkpoint 继承和教师数据迁移误画成一条直线。"
-    problem: "区分架构/权重继承与行为/数据继承，解释 V2 的高效架构和 GRPO、V3 的内部 R1 数据、R1-Zero 的可验证探索，以及 Qwen/Llama 学生的响应蒸馏怎样组成闭环。"
-    legacy: "三份报告同时改变 base、数据、规模、reward、训练阶段和系统，缺少全变量受控对照；R1 训练栈、完整数据、token mask/reduction 和 MTP rollout 接口也未完整公开。"
-    team: "DeepSeek-AI 的 DeepSeek-V2、DeepSeek-V3 与 DeepSeek-R1 三份相邻报告综合；R1 有已核对的 Nature 正式身份，但本页机制引用使用固定 86 页 arXiv-v2。"
-    impact: "该系列把高效 MoE/MLA 底座、可验证 reasoning RL、拒绝采样数据生产和跨架构小模型迁移放进同一工程链，是理解现代 reasoning model 生产方式的代表案例。"
-    value: "读完后应能解释 R1-Zero 为什么不是从零训练、R1-Distill-Qwen 为什么仍是 Qwen 架构、能力怎样沿固定响应而非权重传播，以及无 critic 为什么仍需多模型运行系统。"
-    strategy: "用同一恢复请求对比两个动作：R1-Zero 必须在隔离 sandbox 中验证 A 的终态；R1-Distill 只把筛选后的 A 当固定 target，用学生 `[B,T,V]` logits 做 CE。再画权重/架构与行为/数据两张箭头；完整阶段、系统和反例第二遍再读。"
-    prerequisites: "DeepSeek-V3 单篇、MoE、MLA/KV cache、SFT、GRPO、拒绝采样和自回归知识蒸馏"
+    effort: "结论首读约 5–10 分钟；架构主线 30–45 分钟；机制与原文分次精读"
+    background: "从早期 dense 模型到百万上下文 Agent，瓶颈依次落在参数计算、KV 宽度、历史访问、跨层重复和长程训练系统；只按发布日期读报告难以对照这些变化。"
+    problem: "在一篇中对比 DeepSeek 主系列与专门分支，并就近讲解 DeepSeekMoE、GRPO、NSA、YOCO、跨层 KV/索引共享、mHC、Engram 和 DSpark。"
+    legacy: "代际整模提升不是单组件消融；CSA2 仍有随长度增长的全局缓存与首次索引，bounded replay 是近似恢复，异步 OPD 也不等于所有样本严格来自最新策略。"
+    team: "DeepSeek-AI 官方报告与模型卡；相关机制同时追溯 Microsoft、清华、MIT/IBM 等原始工作。按固定 PDF 物理页回查，不混用版本。"
+    impact: "把稀疏计算、缓存压缩、可验证推理和长程 Agent 系统放在同一演进链中。"
+    value: "能区分 MLA、稀疏注意力和线性递归，重算 V4.1 的 890 bytes/token，并说明固定响应 SFT 与学生轨迹上全词表 OPD 的不同。"
+    strategy: "先读七条结论、五个前置概念和代际表，再沿同一修复请求追踪存什么、读什么、谁接梯度；运行 MLA、Top-k、890 bytes/token 与 OPD 四段小代码，最后点击 PDF 页码核对公式、配置和实验边界。"
+    prerequisites: "Transformer、softmax、矩阵乘法、KV cache、交叉熵；MoE、RL 与蒸馏在文内衔接，不要求先读 V3 单篇"
 
   agentic-rl-credit-assignment.md:
     level: "Agentic RL 主线 · 机制精读"
@@ -802,3 +802,125 @@ papers:
     value: "设计 coding Agent 时能保存 issue、repo/env revision、action trace、patch、命令、exit code、测试分母和干净回放结果。"
     strategy: "修复 `select_snapshot` 的 verified 过滤 bug，先走 FIM/编译/测试/repo patch/clean replay 五状态；模型谱系和完整实验第二遍回查。"
     prerequisites: "代码检索、causal LM、单元测试/编译和基本 Agent loop"
+
+  20260911-reading-route.md:
+    level: 专题入口
+    effort: 建议投入：30–45 分钟
+    background: 项目经历覆盖多个方向，需要区分核心补课和岗位选读。
+    problem: 把 Agent RL、参考奖励、搜索、蒸馏与系统经历连接到可推导、可反驳的论文机制，并补齐翻译、检索和 F5-TTS 的关键依据。
+    legacy: 这是一条结合项目的学习路线。论文作者的结果、这里的教学例子和你自己的项目证据分开记录；来源审读不等于复现实验。
+    team: 综合路线，由原始论文与简历项目问题组织。
+    impact: 先沿项目问题选择论文，再按四周路线逐项验收。
+    value: 把已有工程经验转化为可推导、可比较、可追问的技术判断。
+    strategy: 完成一张项目证据表并选择第一周实验。
+    prerequisites: 具备现有项目背景即可
+  20260911-reward-shaping.md:
+    level: 主线优先
+    effort: 建议投入：2–3 小时
+    background: 终局奖励稀疏，参考奖励却可能误罚合法路径。
+    problem: 多轮任务终局奖励稀疏，但随手添加“正确步骤加分”可能让模型学会重复调用、模仿参考或迎合评分器。
+    legacy: 潜势定理、PRM 的数学题结果、奖励模型的合成实验分别回答不同问题；没有任何一项能单独证明业务奖励可靠。
+    team: Ng 等人的 ICML 1999；过程监督与奖励过优化原文。
+    impact: 先分清真实目标、参考相似度和潜势差分，再讨论更细的奖励。
+    value: 把已有工程经验转化为可推导、可比较、可追问的技术判断。
+    strategy: 手算终端残余项；设计 proxy/gold 分离的审计。
+    prerequisites: 折扣回报、策略梯度
+  20260911-credit-assignment.md:
+    level: 主线优先
+    effort: 建议投入：3–4 小时
+    background: 多轮轨迹的同一个终局分数无法直接定位责任。
+    problem: 整轨迹失败不代表每个动作都错；只给当前轮加 mask，也没有回答当前动作值得被强化多少。
+    legacy: 更细的归因依赖更具体的信息和假设；相似 observation、相同参考答案、可恢复 sandbox 都不能自动当作完美反事实。
+    team: GiGPO、StepPO v4、RewardFlow、TRACE 与 BPO 作者团队。
+    impact: 奖励定义后，判断当前轮的优势到底来自哪个状态和比较组。
+    value: 把已有工程经验转化为可推导、可比较、可追问的技术判断。
+    strategy: 画 mask/advantage/reduction 三层图，按环境条件选方法。
+    prerequisites: GRPO、轨迹与状态
+  20260911-grpo-objectives.md:
+    level: 主线优先
+    effort: 建议投入：2–3 小时
+    background: 相同奖励与优势，归约和 ratio 定义不同仍会改变训练。
+    problem: 同样被称为 GRPO 的训练，会因奖励标准化、采样、长度分母和 ratio 单位不同，产生不同的参数更新。
+    legacy: 这些论文来自特定推理训练条件；算法名和论文 pooled loss 不能证明当前框架采用相同全局分母。
+    team: DAPO、Dr. GRPO 与 GSPO 原始论文团队。
+    impact: 把局部优势接入 loss 后，手算 token、sequence 和全局分母。
+    value: 把已有工程经验转化为可推导、可比较、可追问的技术判断。
+    strategy: 用长短两个回答重算目标，再对照多卡归约。
+    prerequisites: PPO ratio、组内优势
+  20260911-search-training.md:
+    level: 主线优先
+    effort: 建议投入：2–3 小时
+    background: 搜索的推理收益不自动等于参数学习收益。
+    problem: 单次采样容易走入失败路径，简单“只保留答对样本”又可能保留错误过程；搜索能改进候选，但不自动定义正确的训练目标。
+    legacy: 树上的 backpropagation 是统计回传，未必是神经网络反向传播；搜索后样本也通常不再服从原始 policy 的无筛选分布。
+    team: LATS 与 ReST-MCTS* 作者团队。
+    impact: 明确优化目标后，再区分搜索路径、训练样本与分支策略梯度。
+    value: 把已有工程经验转化为可推导、可比较、可追问的技术判断。
+    strategy: 画冻结搜索与迭代自训练两条图，固定 token 预算比较。
+    prerequisites: 树搜索、SFT、策略梯度
+  20260911-distillation.md:
+    level: 主线优先
+    effort: 建议投入：2–3 小时
+    background: 离线优质答案无法覆盖学生自身错误前缀。
+    problem: 训练只见专家正确轨迹，部署却要面对学生自己造成的错误状态；普通离线蒸馏不能充分覆盖这些前缀。
+    legacy: student rollout、teacher 来源、teacher 的输入、KL 方向与梯度估计是不同选择；不能仅凭 OPD 或自蒸馏名称推断实现。
+    team: DAgger、GKD 与 SDPO 原始论文团队。
+    impact: 搜索提供反馈后，解释教师多看到什么、学生在哪些前缀上学习。
+    value: 把已有工程经验转化为可推导、可比较、可追问的技术判断。
+    strategy: 对同一个前缀手算两种 KL，标明 stop-gradient。
+    prerequisites: 交叉熵、KL、teacher forcing
+  20260911-tool-evaluation.md:
+    level: 主线必读
+    effort: 建议投入：1–2 小时
+    background: 工具成功返回、数据库正确与业务合规是不同事件。
+    problem: 合法 JSON、正确工具名或相似参考轨迹，不能证明任务已完成；一次成功也不能证明多次服务都可靠。
+    legacy: 原始 τ-bench 自己也指出 reward=1 未必证明遵守全部规则；终态正确不能替代过程授权审计。
+    team: τ-bench 原始论文团队。
+    impact: 训练链路走通后，用任务终态与跨次可靠性检验是否真有收益。
+    value: 把已有工程经验转化为可推导、可比较、可追问的技术判断。
+    strategy: 手算 pass@k/pass^k；建立工具、终态、过程规则错误矩阵。
+    prerequisites: 工具调用、组合数
+  20260911-rl-systems.md:
+    level: 系统补课
+    effort: 建议投入：3–4 小时
+    background: 多轮 rollout 长尾与权重分片会阻塞训练并引入陈旧样本。
+    problem: 生成和训练的计算形态不同，同步等待造成浪费；异步提高利用率，却让数据来自旧策略或混合版本。
+    legacy: 系统吞吐、有效训练吞吐和模型质量是不同指标；重要性权重经过截断后也不能无条件称为精确无偏。
+    team: HybridFlow/verl、AReaL 与 IMPALA 原始论文团队。
+    impact: 评价合同固定后，检查采样、权重同步和异步更新是否对应同一分布。
+    value: 把已有工程经验转化为可推导、可比较、可追问的技术判断。
+    strategy: 画 behavior/proximal/current 三时钟并计算时间与质量收益。
+    prerequisites: PPO、重要性采样、分布式训练
+  20260911-translation.md:
+    level: 项目深读
+    effort: 建议投入：6–8 小时，分两轮
+    background: 翻译项目的词表、压缩、监督与偏好目标必须在同一数据和评价合同下解释。
+    problem: 剪枝后可生成不代表长尾无损；改 tokenizer 会改变参数接口；长文与偏好训练都可能利用长度和评价漏洞。
+    legacy: 最终 NLLB 仅 MMT；512 训练长度与可扩展位置表不同；CPO 的 FLORES 训练身份不能被当作独立测试。
+    team: NLLB/CPO、SparseGPT/Wanda/M-Wanda、LLM-Pruner、FOCUS、词表初始化、DBA 与文档评价原文。
+    impact: 从词表与表示到偏好和长链翻译，用十二个问题形成可验证的工程决策。
+    value: 用参数账、概率和梯度手算、同起点实验支撑翻译项目追问。
+    strategy: 先读训练和长度校正，再沿剪枝、tokenizer、PO 与长链逐项做消融设计。
+    prerequisites: Seq2Seq、softmax/交叉熵、DPO、翻译项目背景
+  20260911-retrieval-sql.md:
+    level: 项目选读
+    effort: 建议投入：2 小时
+    background: 局部检索可能漏掉全局主题，合法 SQL 也可能查询错误含义。
+    problem: 局部向量召回难以覆盖全局主题，连续切片难以聚合远距离证据，而自然语言生成 SQL 又容易语法出错。
+    legacy: 图不保证因果推理，摘要不等于原始证据，语法正确也不等于查询语义或权限正确。
+    team: GraphRAG、RAPTOR 与 PICARD 原始论文团队。
+    impact: 再分开摘要索引、跨层召回与 SQL 解析约束解决的问题。
+    value: 把已有工程经验转化为可推导、可比较、可追问的技术判断。
+    strategy: 追踪一个答案到原文；比较语法通过和执行语义正确。
+    prerequisites: 向量检索、RAG、SQL
+  20260911-f5tts.md:
+    level: 语音专项
+    effort: 建议投入：3–5 小时
+    background: 调用 TTS 或更换 solver 不能解释流匹配、对齐和时延预算。
+    problem: 不依赖逐音素强制对齐的非自回归 TTS 可以简化流程，但文本与声学输入的有效长度差会导致对齐不稳，迭代生成又带来时延。
+    legacy: 不使用音素级 duration predictor 不等于不需要总时长；Sway、ODE solver、CFG、分块发送分别改变不同环节，RTF 也不等于首包延迟。
+    team: Flow Matching、E2 TTS 与 F5-TTS 原文；SWivid/F5-TTS 固定源码。
+    impact: 最后沿文本、mel、向量场和波形，解释质量与首包时延的来源。
+    value: 把已有工程经验转化为可推导、可比较、可追问的技术判断。
+    strategy: 手算一帧速度和 Sway 网格；固定 checkpoint 做 solver/时长/前端消融。
+    prerequisites: 张量、MSE、常微分方程直觉；章节内补齐

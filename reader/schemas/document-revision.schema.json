@@ -6,7 +6,7 @@
   "properties": {
     "title": {"type": "string", "minLength": 1, "maxLength": 120},
     "summary": {"type": "string", "minLength": 1, "maxLength": 500},
-    "markdown": {"type": "string", "minLength": 1, "maxLength": 8000},
+    "markdown": {"type": "string", "minLength": 1, "maxLength": 24000},
     "diagram": {
       "type": ["object", "null"],
       "additionalProperties": false,
@@ -38,8 +38,8 @@
             "additionalProperties": false,
             "required": ["from", "to", "label"],
             "properties": {
-              "from": {"type": "string", "maxLength": 40},
-              "to": {"type": "string", "maxLength": 40},
+              "from": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,40}$"},
+              "to": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,40}$"},
               "label": {"type": "string", "maxLength": 80}
             }
           }

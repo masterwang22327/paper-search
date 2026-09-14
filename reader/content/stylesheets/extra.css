@@ -63,7 +63,7 @@ body.reader-nav-collapsed .md-content__inner {
 }
 
 .md-typeset h2 {
-  scroll-margin-top: 6.2rem;
+  scroll-margin-top: var(--reader-scroll-clearance, 7rem);
   margin-top: 2.6em;
   padding-bottom: 0.3em;
   border-bottom: 1px solid var(--md-default-fg-color--lightest);
@@ -71,7 +71,7 @@ body.reader-nav-collapsed .md-content__inner {
 }
 
 .md-typeset h3 {
-  scroll-margin-top: 6.2rem;
+  scroll-margin-top: var(--reader-scroll-clearance, 7rem);
   margin-top: 1.8em;
   font-size: 1.08rem;
 }
@@ -79,6 +79,17 @@ body.reader-nav-collapsed .md-content__inner {
 .md-typeset p,
 .md-typeset li {
   text-wrap: pretty;
+}
+
+.md-typeset [data-reader-block] {
+  scroll-margin-top: var(--reader-scroll-clearance, 7rem);
+}
+
+.reader-nav-paper .md-ellipsis {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .reader-research-page:not(.evidence-panel-open) .md-content__inner {
@@ -503,6 +514,51 @@ body.reader-nav-collapsed .md-content__inner {
   min-width: 100%;
   font-size: 0.72rem;
   line-height: 1.55;
+}
+
+.md-typeset .reader-table-scroll {
+  margin-inline: 0;
+  overflow-x: auto;
+}
+
+.md-typeset .reader-table-compact > .md-typeset__table {
+  display: block;
+  padding: 0;
+}
+
+.md-typeset .reader-table-compact table:not([class]) {
+  width: 100%;
+  table-layout: fixed;
+}
+
+.md-typeset .reader-table-compact th,
+.md-typeset .reader-table-compact td {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  vertical-align: top;
+}
+
+/* The introductory three-column glossary reads better as a wide explanation
+   column on desktop. Other tables keep their natural proportions. */
+.md-typeset .reader-table-compact table:not([class]) th:first-child,
+.md-typeset .reader-table-compact table:not([class]) td:first-child {
+  width: 24%;
+}
+
+.md-typeset .reader-table-compact table:not([class]) th:nth-child(2),
+.md-typeset .reader-table-compact table:not([class]) td:nth-child(2) {
+  width: 33%;
+}
+
+.reader-table-hint {
+  margin: -0.5rem 0 1rem;
+  color: var(--md-default-fg-color--light);
+  font-size: 0.65rem;
+}
+
+.reader-table-scroll:focus-visible {
+  outline: 2px solid var(--md-accent-fg-color);
+  outline-offset: 2px;
 }
 
 .md-typeset .gpt-lineage-table table:not([class]) {
@@ -1250,7 +1306,6 @@ body.evidence-panel-resizing .evidence-panel__frame {
   padding: 0;
   background: transparent;
   cursor: col-resize;
-  touch-action: none;
 }
 
 .evidence-panel__resizer::after {

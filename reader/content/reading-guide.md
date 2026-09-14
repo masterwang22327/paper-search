@@ -24,7 +24,7 @@
 3. **难度递增**：先单一机制，再训练流程，最后多组件系统；
 4. **时间顺序**：只在依赖关系相近时用年代辅助排序。
 
-例如，前 Transformer 的循环状态与 Seq2Seq/GPT 谱系先于 ELMo/ULMFiT；tokenizer 与数据边界先于 BERT/T5/GPT；通用评测先于 reward、judge 与系统比较；DPR 和 Recall@K 先于 embedding 谱系选型。DeepSeek-V3 放在最后作为综合案例，避免 MLA、MTP、路由和 FP8 变成缩写堆叠。
+例如，前 Transformer 的循环状态与 Seq2Seq/GPT 谱系先于 ELMo/ULMFiT；tokenizer 与数据边界先于 BERT/T5/GPT；通用评测先于 reward、judge 与系统比较；embedding 系统调研先建立相似度、对比学习与评测，再进入 DPR 的完整检索实验。DeepSeek 系列对比放在最后作为综合案例，避免 MLA、MTP、路由和 FP8 变成缩写堆叠。
 
 ## 与任务相关的跳读路线
 
@@ -33,12 +33,12 @@
 | 当前目标 | 建议连续路线 |
 |---|---|
 | 建立 LLM 总体基础 | 公式阅读桥 → 神经 LM/word2vec → Seq2Seq/GPT 谱系 → ELMo/ULMFiT → Transformer → 现代 Block → Tokenizer/数据 → BERT/T5/GPT-3 → Scaling → LLaMA → 通用评测 |
-| 做知识库与本文档工程 | Tokenizer/BERT → SBERT/SimCSE → 通用 embedding 训练 → DPR/Recall@K → RAG → 事实性/校准；需要多向量或模型选型时再读 ColBERT/ANN 分支 |
+| 做知识库与本文档工程 | Tokenizer/BERT → Embedding 模型系统调研（原理、训练、近期发展、代码与选型）→ DPR/Recall@K → RAG → 事实性/校准；多向量索引实现延伸到 ColBERT 分支 |
 | 做训练与微调 | 公式阅读桥 → AdamW → Megatron/ZeRO → MoE 路由与通信 → 数值稳定 → LoRA → PEFT → 蒸馏 |
 | 做 RLHF / 推理训练 | 公式阅读桥 → 指令/CoT → 偏好与奖励 → 过程监督/测试时搜索 → PPO → InstructGPT → DPO → GRPO/DAPO/GSPO |
 | 做 Agentic RL 训练与评测 | GRPO/DAPO/GSPO → 长轨迹 credit → Evaluator/Judge → 能力边界与失败 → 环境/rollout 合同 → Async staleness |
 | 做可扩展监督 / 高风险 Agent 评测 | 偏好与奖励 → 过程监督/测试时搜索 → 通用评测 → 可扩展监督与控制评测 |
-| 审计现代大模型系统 | 现代 Block → MoE → 推理系统 → 数值稳定 → 长上下文 → DeepSeek-V3 |
+| 审计现代大模型系统 | 现代 Block → MoE → 推理系统 → 数值稳定 → 长上下文 → DeepSeek 系列对比（LLM 到 V4.1） |
 
 每篇导读卡以“本阶段 i/n”为主，显示它怎样承接上一篇；“全路线 i/56”只是辅助定位。上一篇/下一篇会跨阶段连续，并在长文底部再次出现。它们是依赖关系，不表示后一篇在所有维度都优于前一篇。
 

@@ -1,5 +1,6 @@
 import * as pdfjsLib from "../vendor/pdfjs/pdf.mjs";
 import { locateBlocks, locationLabel } from "./source-locator.mjs";
+import { createPageInsight } from "./page-insight.mjs?v=20260908-aligned-3";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   "../vendor/pdfjs/pdf.worker.mjs",
@@ -87,8 +88,8 @@ const translationEffortKey = "research-reader-translation-effort";
 const legacyTranslationModelKey = "research-reader-translation-retranslation-model";
 const legacyTranslationEffortKey = "research-reader-translation-retranslation-effort";
 const fullTranslationConcurrency = 16;
-const revisionModels = new Set(["gpt-5.6-terra", "gpt-5.6-sol"]);
-const revisionReasoningEfforts = new Set(["medium", "high", "xhigh", "max", "ultra"]);
+const revisionModels = new Set(["gpt-5.6-terra", "gpt-5.6-sol", "gpt-6-astra"]);
+const revisionReasoningEfforts = new Set(["low", "medium", "high", "xhigh", "max", "ultra"]);
 const combiningMathDisplayReplacements = new Map([
   ["\u20d0", "↼"],
   ["\u20d1", "⇀"],
@@ -96,6 +97,78 @@ const combiningMathDisplayReplacements = new Map([
   ["\u20d7", "→"],
   ["\u20e1", "↔"]
 ]);
+
+const pageInsight = createPageInsight({
+  sourceId,
+  api: translationApi,
+  onOpen() { setTranslationPanel(false, true); },
+  onClearRegions() { document.querySelectorAll(".pdf-insight-highlight").forEach(node => node.remove()); },
+  async onLocate(targetPage, quote, regions = [], onSelect, options = {}) {
+    if (targetPage !== pageNumber) return false;
+    const record = pageRecords[targetPage - 1];
+    if (!record) return false;
+    const block = { original_text: quote };
+    await locateBlocks(record, [block]);
+    if (targetPage !== pageNumber || !options.isCurrent?.()) return false;
+    if (block.location_match !== "visual-text-exact" || !Array.isArray(block.bbox)) return false;
+    if (options.center !== false) await renderPage(record);
+    if (targetPage !== pageNumber || !options.isCurrent?.()) return false;
+    record.element.querySelectorAll(`.pdf-insight-highlight[data-insight-id="${options.id}"]`).forEach(node => node.remove());
+    const rectangle = overlayRectangle(record, block.bbox);
+    if (!rectangle) return false;
+    const pageWidth = record.element.clientWidth;
+    const pageHeight = record.element.clientHeight;
+    const anchorX = (rectangle.left + rectangle.width / 2) / pageWidth * 1000;
+    const anchorY = (rectangle.top + rectangle.height / 2) / pageHeight * 1000;
+    // Only trust visual regions when the exact text anchor corroborates their location.
+    const anchoredRegions = regions.filter(([left, top, right, bottom]) =>
+      anchorX >= left - 12 && anchorX <= right + 12 && anchorY >= top - 12 && anchorY <= bottom + 12
+    );
+    const useRegions = anchoredRegions.length > 0;
+    const boxes = useRegions ? regions.map(([left, top, right, bottom]) => ({
+      left: left / 10, top: top / 10, width: (right - left) / 10, height: (bottom - top) / 10
+    })) : [{left: rectangle.left / pageWidth * 100, top: rectangle.top / pageHeight * 100,
+      width: rectangle.width / pageWidth * 100, height: rectangle.height / pageHeight * 100}];
+    for (const box of boxes) {
+      const highlight = document.createElement("button");
+      highlight.type = "button";
+      highlight.className = "pdf-insight-highlight";
+      highlight.dataset.insightId = String(options.id);
+      highlight.title = `查看第 ${options.id + 1} 块解析`;
+      highlight.setAttribute("aria-label", highlight.title);
+      highlight.addEventListener("click", event => {
+        if (suppressPdfClick) return;
+        event.stopPropagation();
+        if (!options.isCurrent?.()) return;
+        document.querySelectorAll(".pdf-insight-highlight").forEach(node => node.classList.toggle("is-selected", node.dataset.insightId === String(options.id)));
+        onSelect?.();
+      });
+      for (const dimension of ["left", "top", "width", "height"]) highlight.style[dimension] = `${box[dimension]}%`;
+      record.element.append(highlight);
+    }
+    if (options.center === false) return useRegions ? "region" : "text";
+    document.querySelectorAll(".pdf-insight-highlight").forEach(node => node.classList.toggle("is-selected", node.dataset.insightId === String(options.id)));
+    if (useRegions) {
+      const [left, top, right, bottom] = anchoredRegions[0];
+      const viewport = record.page.getViewport({scale: 1});
+      const a = viewport.convertToPdfPoint(left / 1000 * viewport.width, top / 1000 * viewport.height);
+      const b = viewport.convertToPdfPoint(right / 1000 * viewport.width, bottom / 1000 * viewport.height);
+      centerPdfBox(record, [...a, ...b]);
+    } else centerPdfBox(record, block.bbox);
+    return useRegions ? "region" : "text";
+  },
+  onLayoutChange() {
+    if (!pdfDocument) return;
+    pageDetectionSuspended = true;
+    pageDetectionGeneration += 1;
+    const targetPage = pageNumber;
+    requestAnimationFrame(() => {
+      updatePageLayouts();
+      renderNearPage(targetPage);
+      scrollToPage(targetPage);
+    });
+  }
+});
 
 function readableMathText(value) {
   return String(value ?? "").replace(/[\u20d0-\u20ff]/gu, character => (
@@ -470,6 +543,11 @@ function translationApi(path, options = {}) {
       ...(options.headers || {})
     }
   }).then(async response => {
+    if (!response.headers.get("Content-Type")?.includes("application/json")) {
+      throw new Error(response.status === 404 && path.startsWith("/api/pdf/page-insight")
+        ? "当前服务尚未加载概览接口，请打开新版阅读器 http://127.0.0.1:8001"
+        : `服务暂时不可用（HTTP ${response.status}），请稍后重试`);
+    }
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || `请求失败：${response.status}`);
     return data;
@@ -542,6 +620,7 @@ function updateTranslationControls() {
 }
 
 function setTranslationPanel(open, manual = false) {
+  if (open) pageInsight.close();
   const changed = translationPanelOpen !== open;
   const targetPage = pageNumber;
   if (manual && !open) translationPanelDismissed = true;
@@ -1008,6 +1087,7 @@ function updateUrl() {
 }
 
 function updateControls() {
+  pageInsight.setPage(pageNumber);
   pageInput.value = String(pageNumber);
   previousButton.disabled = pageNumber <= 1;
   nextButton.disabled = !pdfDocument || pageNumber >= pdfDocument.numPages;
@@ -1307,8 +1387,21 @@ translatePageButton.addEventListener("click", () => translateCurrentPage(false))
 translateAllButton.addEventListener("click", () => translateAllPages(false));
 retranslatePageButton.addEventListener("click", () => translateCurrentPage(true));
 closeTranslationButton.addEventListener("click", () => setTranslationPanel(false, true));
+function syncTranslationReasoningOptions() {
+  const astra = retranslationModelSelect.value === "gpt-6-astra";
+  for (const option of retranslationEffortSelect.options) {
+    option.disabled = astra ? option.value === "ultra" : option.value === "low";
+    option.hidden = option.disabled;
+  }
+  if (!retranslationEffortSelect.value || retranslationEffortSelect.selectedOptions[0].disabled) {
+    retranslationEffortSelect.value = astra && retranslationEffortSelect.value === "ultra" ? "max" : "medium";
+  }
+}
+
 retranslationModelSelect.addEventListener("change", () => {
+  syncTranslationReasoningOptions();
   localStorage.setItem(translationModelKey, retranslationModelSelect.value);
+  localStorage.setItem(translationEffortKey, retranslationEffortSelect.value);
 });
 retranslationEffortSelect.addEventListener("change", () => {
   localStorage.setItem(translationEffortKey, retranslationEffortSelect.value);
@@ -1418,6 +1511,7 @@ async function start() {
       || localStorage.getItem(legacyTranslationEffortKey);
     retranslationModelSelect.value = revisionModels.has(savedModel) ? savedModel : "gpt-5.6-terra";
     retranslationEffortSelect.value = revisionReasoningEfforts.has(savedEffort) ? savedEffort : "medium";
+    syncTranslationReasoningOptions();
     localStorage.setItem(translationModelKey, retranslationModelSelect.value);
     localStorage.setItem(translationEffortKey, retranslationEffortSelect.value);
     pdfDocument = await pdfjsLib.getDocument({ url: fileUrl.href }).promise;
@@ -1428,6 +1522,7 @@ async function start() {
     await buildPageFlow();
     updateControls();
     updateTranslationControls();
+    pageInsight.setReady(Boolean(readerToken));
     if (scrollFrame) cancelAnimationFrame(scrollFrame);
     scrollFrame = null;
     scrollToPage(initialPage);

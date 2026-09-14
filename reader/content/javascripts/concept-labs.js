@@ -40,6 +40,75 @@
       invariant: "仍是隐藏状态，不是 logits 或概率"
     }
   };
+  const LLAMA_CONTEXT_OPTIONS = [128, 256, 512, 1024, 2048];
+  const LLAMA_MODELS = {
+    "7b": {label: "7B", dim: 4096, layers: 32, heads: 32, tokens: 1e12},
+    "13b": {label: "13B", dim: 5120, layers: 40, heads: 40, tokens: 1e12},
+    "33b": {label: "33B", dim: 6656, layers: 60, heads: 52, tokens: 1.4e12},
+    "65b": {label: "65B", dim: 8192, layers: 80, heads: 64, tokens: 1.4e12}
+  };
+  const DISTILLATION_MODES = {
+    seqkd: {
+      badge: "SeqKD · offline hard response",
+      rollout: ["teacher beam", "teacher 先生成固定目标语料"],
+      privilege: ["无额外特权", "teacher 与 student 接收同一输入"],
+      target: ["hard response", "只保留选中序列的 next token"],
+      update: ["student NLL", "teacher decode 不可导；只更新 student"],
+      density: "每位置 × 1 token",
+      cost: "teacher decode + student forward",
+      risk: "只保留一条最高概率序列，丢失分布与多样性"
+    },
+    gkd: {
+      badge: "GKD · external teacher",
+      rollout: ["当前 student", "按部署上下文采样前缀"],
+      privilege: ["同一 prompt", "外部 teacher 在 student prefix 上重算"],
+      target: ["更强 frozen teacher", "full-V logits 或 sampled-token 分数"],
+      update: ["token divergence", "只更新 student；rollout/teacher detach"],
+      density: "每位置 × 完整词表",
+      cost: "student rollout + 大 teacher forward",
+      risk: "异常前缀上的 recovery 未必正确"
+    },
+    opsd: {
+      badge: "OPSD · privileged self-teacher",
+      rollout: ["当前 student", "按部署上下文采样前缀"],
+      privilege: ["参考解 y*", "仅 teacher 可见"],
+      target: ["同源 fixed teacher", "student prefix 上的 full-V logits"],
+      update: ["forward KL", "只更新 student；rollout/teacher detach"],
+      density: "每位置 × 完整词表",
+      cost: "rollout + 同模型双条件 forward",
+      risk: "hindsight/style 压过纠错"
+    },
+    sdpo: {
+      badge: "SDPO · feedback self-teacher",
+      rollout: ["当前 policy", "执行后保留原始 attempt prefix"],
+      privilege: ["环境文本反馈", "错误、测试或成功 sibling 仅 teacher 可见"],
+      target: ["反馈条件 self-teacher", "同一 attempt 上重算 token 分布"],
+      update: ["dense logit advantage", "可接入 RLVR optimizer；teacher detach"],
+      density: "每位置 × full/top-k 分布",
+      cost: "rollout + 环境 + teacher score",
+      risk: "反馈错误、泄漏或 prompt injection"
+    },
+    uopsd: {
+      badge: "U-OPSD · consensus self-teacher",
+      rollout: ["同模型 G 次采样", "默认 G=8；先抽取并规范化答案"],
+      privilege: ["多数票 agreeing trace", "无 gold；置信度分母含截断 rollout"],
+      target: ["fixed/EMA self-teacher", "只在 disagreeing prefix 上重算"],
+      update: ["forward KL", "vote/parser/teacher/rollout 全 detach"],
+      density: "被选分歧轨迹 × 完整词表",
+      cost: "G rollouts + vote + 双条件 score",
+      risk: "相关错误可高置信自我强化"
+    },
+    beta: {
+      badge: "β-OPSD · reference-to-teacher target",
+      rollout: ["当前 student", "仍在 deployment-view 上采样"],
+      privilege: ["参考解 y*", "privileged teacher 与 reference 同时定目标"],
+      target: ["几何插值 target", "prefix-local logits 近似序列最优分布"],
+      update: ["return-to-go", "future log-ratio detach 后更新 student"],
+      density: "每位置 × 插值分布",
+      cost: "rollout + reference/teacher/student score",
+      risk: "局部插值与长程最优仍有近似差"
+    }
+  };
 
   function formatInteger(value) {
     return Math.round(value).toLocaleString("en-US");
@@ -751,6 +820,328 @@
     render("best-of-n");
   }
 
+  function initializeLlamaBudgetLab(root) {
+    if (root.dataset.enhanced === "true") return;
+    root.dataset.enhanced = "true";
+    const contextInput = root.querySelector('[data-llama-input="context"]');
+    const batchInput = root.querySelector('[data-llama-input="batch"]');
+    const form = root.querySelector("form");
+    const state = {
+      model: LLAMA_MODELS[root.dataset.llamaModel] ? root.dataset.llamaModel : "7b",
+      context: Number(root.dataset.llamaContext) || 2048,
+      batch: Number(root.dataset.llamaBatch) || 1,
+      bytes: Number(root.dataset.llamaBytes) || 2
+    };
+    const formatBillions = value => `${(value / 1e9).toFixed(3)}B`;
+    const formatTrillions = value => `${(value / 1e12).toFixed(1)}T`;
+    const formatThousands = value => `${Math.round(value / 1000)}k`;
+    const formatFlops = value => `${value.toExponential(2).replace("+", "")} FLOPs`;
+
+    form?.addEventListener("submit", event => event.preventDefault());
+    if (contextInput) {
+      const initialIndex = LLAMA_CONTEXT_OPTIONS.indexOf(state.context);
+      contextInput.value = String(initialIndex >= 0 ? initialIndex : LLAMA_CONTEXT_OPTIONS.length - 1);
+    }
+    if (batchInput) batchInput.value = String(state.batch);
+
+    function render() {
+      const model = LLAMA_MODELS[state.model];
+      const vocab = 32000;
+      const ffn = Math.ceil((8 * model.dim / 3) / 256) * 256;
+      const attention = 4 * model.dim * model.dim;
+      const feedForward = 3 * model.dim * ffn;
+      const blockParams = model.layers * (attention + feedForward + 2 * model.dim);
+      const embeddingParams = 2 * vocab * model.dim + model.dim;
+      const params = blockParams + embeddingParams;
+      const steps = model.tokens / 4e6;
+      const trainFlops = 6 * params * model.tokens;
+      const weightBytes = params * state.bytes;
+      const kvBytes = 2 * state.batch * model.layers * state.context * model.dim * state.bytes;
+      const attentionShare = 100 * attention / (attention + feedForward);
+      const ffnShare = 100 - attentionShare;
+      const blockShare = 100 * blockParams / params;
+
+      root.dataset.llamaModel = state.model;
+      root.dataset.llamaContext = String(state.context);
+      root.dataset.llamaBatch = String(state.batch);
+      root.dataset.llamaBytes = String(state.bytes);
+      root.querySelectorAll("[data-llama-preset]").forEach(button => {
+        const active = button.dataset.llamaPreset === state.model;
+        button.classList.toggle("is-active", active);
+        button.setAttribute("aria-pressed", String(active));
+      });
+      root.querySelectorAll('[data-llama-control="bytes"] button').forEach(button => {
+        const active = Number(button.dataset.value) === state.bytes;
+        button.classList.toggle("is-active", active);
+        button.setAttribute("aria-pressed", String(active));
+      });
+
+      setText(root, "[data-llama-badge]", `${model.label} · ${formatBillions(params)} 参数`);
+      setText(root, '[data-llama-output="context"]', formatInteger(state.context));
+      setText(root, '[data-llama-output="batch"]', formatInteger(state.batch));
+      setText(root, '[data-llama-geometry="core"]', `${formatInteger(model.dim)} / ${model.layers}`);
+      setText(root, '[data-llama-geometry="heads"]', `${model.heads} / ${model.heads} · MHA`);
+      setText(root, '[data-llama-geometry="ffn"]', `${model.dim / model.heads} / ${formatInteger(ffn)}`);
+      setText(root, '[data-llama-geometry="training"]', `${formatTrillions(model.tokens)} / ${formatThousands(steps)}`);
+      setText(root, '[data-llama-metric="params"]', formatBillions(params));
+      setText(root, '[data-llama-note="params"]', `block ${blockShare.toFixed(1)}% · embedding/head ${(100 - blockShare).toFixed(1)}%`);
+      setText(root, '[data-llama-metric="train"]', formatFlops(trainFlops));
+      setText(root, '[data-llama-note="train"]', `${formatTrillions(model.tokens)} tokens · 4M/token batch`);
+      setText(root, '[data-llama-metric="weights"]', formatBytes(weightBytes));
+      setText(root, '[data-llama-metric="kv"]', formatBytes(kvBytes));
+      setText(root, '[data-llama-note="kv"]', `2 × ${state.batch} × ${model.layers} × ${formatInteger(state.context)} × ${formatInteger(model.dim)} × ${state.bytes}B`);
+      setText(root, '[data-llama-share="attention"]', `${attentionShare.toFixed(1)}%`);
+      setText(root, '[data-llama-share="ffn"]', `${ffnShare.toFixed(1)}%`);
+      setText(
+        root,
+        "[data-llama-formula]",
+        `N ≈ ${model.layers} × (4 × ${model.dim}² + 3 × ${model.dim} × ${ffn}) + 2 × ${vocab} × ${model.dim}`
+      );
+      const attentionBar = root.querySelector('[data-llama-bar="attention"]');
+      const ffnBar = root.querySelector('[data-llama-bar="ffn"]');
+      if (attentionBar) attentionBar.style.width = `${attentionShare}%`;
+      if (ffnBar) ffnBar.style.width = `${ffnShare}%`;
+      contextInput?.setAttribute("aria-valuetext", `${formatInteger(state.context)} tokens`);
+      batchInput?.setAttribute("aria-valuetext", `${state.batch} sequences`);
+    }
+
+    root.querySelectorAll("[data-llama-preset]").forEach(button => {
+      button.addEventListener("click", () => {
+        state.model = button.dataset.llamaPreset;
+        render();
+      });
+    });
+    root.querySelectorAll('[data-llama-control="bytes"] button').forEach(button => {
+      button.addEventListener("click", () => {
+        state.bytes = Number(button.dataset.value);
+        render();
+      });
+    });
+    contextInput?.addEventListener("input", () => {
+      state.context = LLAMA_CONTEXT_OPTIONS[Number(contextInput.value)];
+      render();
+    });
+    batchInput?.addEventListener("input", () => {
+      state.batch = Number(batchInput.value);
+      render();
+    });
+    render();
+  }
+
+  function initializeDistillationPolicyLab(root) {
+    if (root.dataset.enhanced === "true") return;
+    root.dataset.enhanced = "true";
+    const buttons = Array.from(root.querySelectorAll("[data-distillation-preset]"));
+    const betaControl = root.querySelector("[data-distillation-beta-control]");
+    const betaInput = root.querySelector("[data-distillation-beta-input]");
+    const state = {
+      mode: DISTILLATION_MODES[root.dataset.distillationMode] ? root.dataset.distillationMode : "opsd",
+      teacherWeight: Number(betaInput?.value || 65) / 100
+    };
+
+    betaControl?.addEventListener("submit", event => event.preventDefault());
+
+    function setPair(key, pair) {
+      setText(root, `[data-distillation-value="${key}"]`, pair[0]);
+      setText(root, `[data-distillation-note="${key}"]`, pair[1]);
+    }
+
+    function renderBeta() {
+      const weight = state.teacherWeight;
+      const reference = 1 - weight;
+      const beta = weight === 0 ? "∞" : (1 / weight).toFixed(2);
+      const teacherPercent = `${Math.round(weight * 100)}%`;
+      const referencePercent = `${Math.round(reference * 100)}%`;
+      setText(root, "[data-distillation-beta-output]", weight.toFixed(2));
+      setText(
+        root,
+        "[data-distillation-beta-formula]",
+        `target = softmax(${reference.toFixed(2)} z_ref + ${weight.toFixed(2)} z_teacher), β = ${beta}`
+      );
+      const referenceBar = root.querySelector("[data-distillation-reference-bar]");
+      const teacherBar = root.querySelector("[data-distillation-teacher-bar]");
+      if (referenceBar) {
+        referenceBar.style.width = referencePercent;
+        referenceBar.textContent = reference >= 0.18 ? `reference ${reference.toFixed(2)}` : "";
+      }
+      if (teacherBar) {
+        teacherBar.style.width = teacherPercent;
+        teacherBar.textContent = weight >= 0.18 ? `teacher ${weight.toFixed(2)}` : "";
+      }
+      betaInput?.setAttribute(
+        "aria-valuetext",
+        `teacher ${weight.toFixed(2)}, reference ${reference.toFixed(2)}, beta ${beta}`
+      );
+    }
+
+    function render() {
+      const detail = DISTILLATION_MODES[state.mode];
+      root.dataset.distillationMode = state.mode;
+      buttons.forEach(button => {
+        const active = button.dataset.distillationPreset === state.mode;
+        button.classList.toggle("is-active", active);
+        button.setAttribute("aria-pressed", String(active));
+      });
+      setText(root, "[data-distillation-badge]", detail.badge);
+      ["rollout", "privilege", "target", "update"].forEach(key => setPair(key, detail[key]));
+      ["density", "cost", "risk"].forEach(key => {
+        setText(root, `[data-distillation-metric="${key}"]`, detail[key]);
+      });
+      if (betaControl) betaControl.hidden = state.mode !== "beta";
+      renderBeta();
+    }
+
+    buttons.forEach(button => {
+      button.addEventListener("click", () => {
+        state.mode = button.dataset.distillationPreset;
+        render();
+      });
+    });
+    betaInput?.addEventListener("input", () => {
+      state.teacherWeight = Number(betaInput.value) / 100;
+      renderBeta();
+    });
+    render();
+  }
+
+  function initializeKlIntuitionLab(root) {
+    if (root.dataset.enhanced === "true") return;
+    root.dataset.enhanced = "true";
+
+    const teacher = [0.8, 0.15, 0.05];
+    const focusInput = root.querySelector("[data-kl-focus]");
+    const playButton = root.querySelector("[data-kl-play]");
+    const resetButton = root.querySelector("[data-kl-reset]");
+    const state = {
+      q: distributionFromFocus(Number(focusInput?.value || 98) / 100),
+      timer: null,
+      step: 0
+    };
+
+    function distributionFromFocus(focus) {
+      const remainder = Math.max(0, 1 - focus);
+      return [focus, remainder * 0.75, remainder * 0.25];
+    }
+
+    function fixed(value) {
+      return Number.isFinite(value) ? value.toFixed(3) : "∞";
+    }
+
+    function entropy(probabilities) {
+      return -probabilities.reduce((sum, value) => (
+        value > 0 ? sum + value * Math.log(value) : sum
+      ), 0);
+    }
+
+    function crossEntropy(target, prediction) {
+      let total = 0;
+      for (let index = 0; index < target.length; index += 1) {
+        const value = target[index];
+        const probability = prediction[index];
+        if (value > 0 && probability <= 0) return Infinity;
+        if (value > 0) total -= value * Math.log(probability);
+      }
+      return total;
+    }
+
+    function forwardKl(target, prediction) {
+      return target.reduce((sum, value, index) => {
+        const probability = prediction[index];
+        return value === 0 ? sum : probability > 0
+          ? sum + value * Math.log(value / probability)
+          : Infinity;
+      }, 0);
+    }
+
+    function reverseKl(prediction, target) {
+      return prediction.reduce((sum, value, index) => {
+        const targetValue = target[index];
+        return value === 0 ? sum : targetValue > 0
+          ? sum + value * Math.log(value / targetValue)
+          : Infinity;
+      }, 0);
+    }
+
+    function stopAnimation() {
+      if (state.timer !== null) {
+        window.clearInterval(state.timer);
+        state.timer = null;
+      }
+      if (focusInput) focusInput.disabled = false;
+      if (playButton) {
+        playButton.disabled = false;
+        playButton.textContent = "播放一次更新";
+      }
+    }
+
+    function render() {
+      const teacherEntropy = entropy(teacher);
+      const ce = crossEntropy(teacher, state.q);
+      const forward = forwardKl(teacher, state.q);
+      const reverse = reverseKl(state.q, teacher);
+      state.q.forEach((value, index) => {
+        const teacherBar = root.querySelector(`[data-kl-teacher-bar="${index}"]`);
+        const studentBar = root.querySelector(`[data-kl-student-bar="${index}"]`);
+        const valueNode = root.querySelector(`[data-kl-value="${index}"]`);
+        const gradientNode = root.querySelector(`[data-kl-gradient="${index}"]`);
+        const delta = value - teacher[index];
+        if (teacherBar) teacherBar.style.width = `${teacher[index] * 100}%`;
+        if (studentBar) studentBar.style.width = `${value * 100}%`;
+        if (valueNode) valueNode.textContent = `p ${teacher[index].toFixed(2)} · q ${value.toFixed(3)}`;
+        if (gradientNode) {
+          gradientNode.textContent = `q-p ${delta >= 0 ? "+" : ""}${delta.toFixed(3)}`;
+          gradientNode.classList.toggle("is-positive", delta > 0.001);
+          gradientNode.classList.toggle("is-negative", delta < -0.001);
+        }
+      });
+      setText(root, "[data-kl-output]", state.q[0].toFixed(2));
+      setText(root, '[data-kl-metric="entropy"]', fixed(teacherEntropy));
+      setText(root, '[data-kl-metric="ce"]', fixed(ce));
+      setText(root, '[data-kl-metric="forward"]', fixed(forward));
+      setText(root, '[data-kl-metric="reverse"]', fixed(reverse));
+      const readout = state.q[2] < 0.01
+        ? "学生给 C 的概率已经接近 0；但教师仍给它 0.05，所以 forward KL 会要求学生为 C 留下非零概率。"
+        : Math.abs(forward) < 0.01
+          ? "学生已经接近教师：交叉熵几乎等于固定的 H(p)，额外的 forward KL 接近 0。"
+          : "q-p 为正，表示学生给得过多，logit 会被压低；q-p 为负，表示学生给得太少，logit 会被抬高。";
+      setText(root, "[data-kl-readout]", readout);
+      if (focusInput) {
+        focusInput.setAttribute("aria-valuetext", `候选 A 概率 ${state.q[0].toFixed(3)}`);
+      }
+    }
+
+    focusInput?.addEventListener("input", () => {
+      stopAnimation();
+      state.q = distributionFromFocus(Number(focusInput.value) / 100);
+      render();
+    });
+    resetButton?.addEventListener("click", () => {
+      stopAnimation();
+      if (focusInput) focusInput.value = "98";
+      state.q = distributionFromFocus(0.98);
+      render();
+    });
+    playButton?.addEventListener("click", () => {
+      stopAnimation();
+      state.step = 0;
+      if (focusInput) focusInput.disabled = true;
+      playButton.disabled = true;
+      playButton.textContent = "播放中...";
+      state.timer = window.setInterval(() => {
+        state.q = state.q.map((value, index) => value + 0.22 * (teacher[index] - value));
+        state.step += 1;
+        render();
+        if (state.step >= 12 || Math.max(...state.q.map((value, index) => Math.abs(value - teacher[index]))) < 0.002) {
+          stopAnimation();
+          if (focusInput) {
+            focusInput.value = String(Math.round(state.q[0] * 100));
+          }
+        }
+      }, 280);
+    });
+    render();
+  }
+
   function initialize() {
     const documentMeta = document.querySelector(".reader-document-meta");
     const modernBlock = documentMeta?.dataset.documentId === "papers/modern-transformer-block.md";
@@ -764,6 +1155,9 @@
     document.querySelectorAll('[data-reader-widget="sliding-window-reach"]').forEach(initializeSlidingWindowLab);
     document.querySelectorAll('[data-reader-widget="intervention-map"]').forEach(initializeInterventionMap);
     document.querySelectorAll('[data-reader-widget="reward-policy-clock"]').forEach(initializeRewardPolicyClock);
+    document.querySelectorAll('[data-reader-widget="llama-budget"]').forEach(initializeLlamaBudgetLab);
+    document.querySelectorAll('[data-reader-widget="distillation-policy"]').forEach(initializeDistillationPolicyLab);
+    document.querySelectorAll('[data-reader-widget="kl-intuition"]').forEach(initializeKlIntuitionLab);
   }
 
   if (typeof document$ !== "undefined") document$.subscribe(initialize);

@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="720" viewBox="0 0 1600 720" role="img" aria-labelledby="title desc">
+  <title id="title">Flow matching and diffusion training targets</title>
+  <desc id="desc">F5-TTS flow matching directly learns a transport velocity, while diffusion learns noise, score, or v from a forward corruption process.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#5f6b76"/></marker>
+    <style>
+      .title{font:700 34px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#18212b}.sub{font:22px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#5f6b76}.lane{font:700 25px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.box{stroke-width:2}.label{font:700 21px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#18212b;text-anchor:middle}.note{font:20px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#5f6b76;text-anchor:middle}.edge{stroke:#5f6b76;stroke-width:3;fill:none;marker-end:url(#arrow)}
+    </style>
+  </defs>
+  <rect width="1600" height="720" fill="#fff"/>
+  <text class="title" x="55" y="65">Flow matching and diffusion: what the network learns</text>
+  <text class="sub" x="55" y="105">Both train at one sampled time; both usually evaluate a neural field repeatedly at inference.</text>
+
+  <text class="lane" x="55" y="180" fill="#177c78">F5-TTS / OT-CFM</text>
+  <rect class="box" x="55" y="215" rx="14" width="175" height="95" fill="#d9efec" stroke="#177c78"/><text class="label" x="142" y="254">noise</text><text class="note" x="142" y="287">x0</text>
+  <rect class="box" x="300" y="215" rx="14" width="205" height="95" fill="#edf0f2" stroke="#9da7af"/><text class="label" x="402" y="254">interpolate</text><text class="note" x="402" y="287">xt</text>
+  <rect class="box" x="575" y="215" rx="14" width="235" height="95" fill="#f7dfd8" stroke="#cc5b45"/><text class="label" x="692" y="254">target velocity</text><text class="note" x="692" y="287">x1 - x0</text>
+  <rect class="box" x="880" y="215" rx="14" width="235" height="95" fill="#faedc5" stroke="#d69b22"/><text class="label" x="997" y="254">learn field</text><text class="note" x="997" y="287">v(theta, xt, t, c)</text>
+  <rect class="box" x="1350" y="215" rx="14" width="175" height="95" fill="#d9efec" stroke="#177c78"/><text class="label" x="1437" y="254">speech mel</text><text class="note" x="1437" y="287">x1</text>
+  <path class="edge" d="M230 262 H295"/><path class="edge" d="M505 262 H570"/><path class="edge" d="M810 262 H875"/><path class="edge" d="M1115 262 H1345"/>
+  <text class="note" x="402" y="345">xt = (1-t)x0 + t x1</text><text class="note" x="1230" y="345">ODE integration</text>
+
+  <line x1="55" y1="380" x2="1545" y2="380" stroke="#d9dee2" stroke-width="2"/>
+  <text class="lane" x="55" y="435" fill="#cc5b45">Typical diffusion</text>
+  <rect class="box" x="55" y="470" rx="14" width="175" height="95" fill="#f7dfd8" stroke="#cc5b45"/><text class="label" x="142" y="509">speech data</text><text class="note" x="142" y="542">x0</text>
+  <rect class="box" x="300" y="470" rx="14" width="205" height="95" fill="#edf0f2" stroke="#9da7af"/><text class="label" x="402" y="509">forward noise</text><text class="note" x="402" y="542">q(xt | x0)</text>
+  <rect class="box" x="575" y="470" rx="14" width="235" height="95" fill="#faedc5" stroke="#d69b22"/><text class="label" x="692" y="509">predict</text><text class="note" x="692" y="542">epsilon, score, or v</text>
+  <rect class="box" x="880" y="470" rx="14" width="235" height="95" fill="#f7dfd8" stroke="#cc5b45"/><text class="label" x="997" y="509">reverse process</text><text class="note" x="997" y="542">SDE or ODE</text>
+  <rect class="box" x="1350" y="470" rx="14" width="175" height="95" fill="#d9efec" stroke="#177c78"/><text class="label" x="1437" y="509">speech</text><text class="note" x="1437" y="542">sample</text>
+  <path class="edge" d="M230 517 H295" stroke-dasharray="9 8"/><path class="edge" d="M505 517 H570"/><path class="edge" d="M810 517 H875"/><path class="edge" d="M1115 517 H1345"/>
+  <text class="note" x="402" y="607">known corruption</text><text class="note" x="1230" y="607">repeated denoising / integration</text>
+  <rect x="55" y="645" width="1490" height="44" rx="9" fill="#f5f7f8"/><text x="75" y="674" style="font:700 20px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;fill:#18212b">Key:</text><text x="135" y="674" style="font:20px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;fill:#5f6b76">CFM directly regresses transport velocity; diffusion derives a reverse process from forward corruption.</text>
+</svg>

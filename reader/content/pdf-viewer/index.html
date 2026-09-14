@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <title>论文 PDF</title>
-    <link rel="stylesheet" href="viewer.css?v=20260826-1">
+    <link rel="stylesheet" href="viewer.css?v=20260908-aligned-3">
   </head>
   <body>
     <header class="toolbar" aria-label="PDF 工具栏">
@@ -26,6 +26,7 @@
       </div>
       <span class="divider"></span>
       <div class="toolbar-group translation-tools">
+        <button id="insight-toggle" type="button" title="打开知识解析" aria-expanded="false" aria-controls="insight-panel" disabled>解析</button>
         <button id="translation-toggle" type="button" class="translation-toggle" title="打开中文译文" aria-pressed="false">译文</button>
       </div>
       <span class="toolbar-spacer"></span>
@@ -36,6 +37,20 @@
         <div id="status" class="status">正在载入 PDF…</div>
         <div id="pages" class="pages" aria-label="PDF 连续页面"></div>
       </main>
+      <button id="insight-resizer" class="translation-resizer" type="button" role="separator" aria-label="拖动调整原文 PDF 与知识解析宽度；双击恢复默认" aria-orientation="vertical" title="拖动调整宽度；双击恢复默认" hidden></button>
+    <section id="insight-panel" class="insight-panel" aria-label="当前 PDF 页知识解析" hidden>
+      <header class="insight-header">
+        <strong id="insight-title">知识解析</strong>
+        <div class="insight-settings">
+          <select id="insight-model" aria-label="解析模型" title="解析模型"></select>
+          <select id="insight-effort" aria-label="解析推理强度" title="解析推理强度"></select>
+          <button id="generate-insight" type="button">解析本页知识</button>
+        </div>
+        <button id="close-insight" class="insight-close" type="button" title="收起解析" aria-label="收起解析">×</button>
+      </header>
+      <div id="insight-status" class="insight-status" role="status" aria-live="polite">尚未生成</div>
+      <div id="insight-content" class="insight-content"></div>
+    </section>
       <button id="translation-resizer" class="translation-resizer" type="button" role="separator" aria-label="拖动调整原文 PDF 与中文译文宽度；双击恢复默认" aria-orientation="vertical" hidden></button>
       <section id="translation-panel" class="translation-panel" aria-label="当前 PDF 页译文" hidden>
         <header class="translation-header">
@@ -56,11 +71,13 @@
                 <select id="retranslation-model" aria-label="翻译模型">
                   <option value="gpt-5.6-terra">gpt-5.6-terra</option>
                   <option value="gpt-5.6-sol">gpt-5.6-sol</option>
+                  <option value="gpt-6-astra">gpt-6-astra</option>
                 </select>
               </label>
               <label>
                 <span class="visually-hidden">强度</span>
                 <select id="retranslation-effort" aria-label="翻译推理强度">
+                  <option value="low">low</option>
                   <option value="medium">medium</option>
                   <option value="high">high</option>
                   <option value="xhigh">xhigh</option>
@@ -90,6 +107,6 @@
         </div>
       </section>
     </div>
-    <script type="module" src="viewer.mjs?v=20260826-1"></script>
+    <script type="module" src="viewer.mjs?v=20260908-aligned-3"></script>
   </body>
 </html>

@@ -53,8 +53,12 @@ def run() -> None:
     assert prepare_docs.route_nav_title(9, "09 · 09 · 从 Causal LLM 到 BERT") == "09 · 从 Causal LLM 到 BERT"
     assert prepare_docs.route_nav_title(10, "10 · 从 BERT 到 T5") == "10 · 从 BERT 到 T5"
     assert prepare_docs.route_nav_title(11, "GPT-3：上下文学习") == "11 · GPT-3：上下文学习"
-    assert len(production_papers) == 70
-    assert len(admitted) == len(route) == len(explicit_cards) == 67
+    assert len(production_papers) == 81
+    assert len(admitted) == len(route) == 73
+    assert len(explicit_cards) == 78
+    assert "arxiv-2412.19437.md" not in admitted
+    assert "arxiv-2412.19437.md" not in candidates
+    assert "deepseek-v2-v3-r1-lineage.md" in route
     assert len(cards) == len(production_papers)
     assert set(candidates) == {
         "agentic-rl-next-directions.md",
@@ -63,12 +67,12 @@ def run() -> None:
     }
     assert "evaluator-judge-validity-cua.md" in admitted
     assert "async-staleness-rolloutpipe.md" in admitted
-    assert sum(len(stage["papers"]) for stage in stages) == 67
+    assert sum(len(stage["papers"]) for stage in stages) == 73
     positions = {filename: context["overall_index"] for filename, context in route.items()}
     assert positions["pretransformer-gpt-lineage.md"] < positions["contextual-representations-finetuning.md"]
     assert positions["tokenization-data-curation.md"] < positions["arxiv-1810.04805.md"]
     assert positions["evaluation-effective-context.md"] < positions["evaluator-judge-validity-cua.md"]
-    assert positions["dpr-dense-retrieval.md"] < positions["embedding-models-lineage-selection.md"]
+    assert positions["embedding-models-lineage-selection.md"] < positions["dpr-dense-retrieval.md"]
     assert positions["reasoning-rl-reductions.md"] < positions["multimodal-llm-vision-language-abi.md"]
     assert positions["instruction-cot-self-consistency.md"] < positions["reward-verifier-policy-learning.md"]
     assert positions["reward-verifier-policy-learning.md"] < positions["preference-reward-overoptimization.md"]
@@ -79,12 +83,12 @@ def run() -> None:
     assert positions["agent-runtime-prompt-injection-security.md"] < positions["arxiv-2608.09867.md"]
     assert positions["arxiv-2608.09867.md"] < positions["agentic-rl-credit-assignment.md"]
     assert positions["scalable-oversight-control-evaluation.md"] < positions["mechanistic-interpretability-causal-intervention.md"]
-    assert positions["code-embedding-retrieval.md"] < positions["code-generation-software-engineering-agents.md"]
+    assert positions["embedding-models-lineage-selection.md"] < positions["code-generation-software-engineering-agents.md"]
     assert route["decoding.md"]["next"]["file"] == "tokenization-data-curation.md"
     assert route["tokenization-data-curation.md"]["previous"]["file"] == "decoding.md"
     assert all(stage["entry"] and stage["outcome"] and stage["checkpoint"] for stage in stages)
     guide_route = prepare_docs.learning_path_markdown(stages)
-    assert guide_route.count('<section class="learning-stage"') == 14
+    assert guide_route.count('<section class="learning-stage"') == 15
     assert "主干 · 阶段" in guide_route and "选读分支 · 阶段" in guide_route
     assert "进入前" in guide_route and "读完后" in guide_route and "阶段检查" in guide_route
     assert 'href="/papers/instruct-model-effective-post-training/"' in guide_route
@@ -99,6 +103,8 @@ def run() -> None:
         assert "10 · 10 ·" not in summary
         assert "09 · 从 Causal LLM 到 BERT" in summary
         assert "10 · 从 BERT 到 T5" in summary
+        assert "papers/arxiv-2412.19437.md" not in summary
+        assert "papers/deepseek-v2-v3-r1-lineage.md" in summary
 
     with tempfile.TemporaryDirectory() as temporary:
         task = Path(temporary)
@@ -207,6 +213,37 @@ def run() -> None:
             PurePosixPath("papers/example.md"),
             task,
         ) == "[来源](https://github.com/huggingface/peft)"
+        pdf_source = task / "sources" / "arxiv-1706.03762v7" / "paper.pdf"
+        pdf_source.write_bytes(b"%PDF-1.7\nplaceholder\n")
+        assert prepare_docs.linkify(
+            "[原始论文 PDF](../sources/arxiv-1706.03762v7/paper.pdf)",
+            PurePosixPath("papers/example.md"),
+            task,
+        ) == (
+            '<a class="evidence-link" href="../../sources/arxiv-1706.03762v7/paper.pdf#page=1" '
+            'data-pdf="../../sources/arxiv-1706.03762v7/paper.pdf" data-page="1" '
+            'data-source-id="arxiv-1706.03762v7" '
+            'data-source-title="原始论文 PDF">原始论文 PDF</a>'
+        )
+        external_pdf = task / "sources" / "arxiv-2305.14314v1" / "paper.pdf"
+        external_pdf.parent.mkdir(parents=True)
+        external_pdf.write_bytes(b"%PDF-1.7\nplaceholder\n")
+        external = prepare_docs.linkify(
+            "[QLoRA](https://arxiv.org/abs/2305.14314)",
+            PurePosixPath("papers/example.md"),
+            task,
+        )
+        assert external == (
+            '<a class="evidence-link" href="../../sources/arxiv-2305.14314v1/paper.pdf#page=1" '
+            'data-pdf="../../sources/arxiv-2305.14314v1/paper.pdf" data-page="1" '
+            'data-source-id="arxiv-2305.14314v1" data-source-title="QLoRA" '
+            'data-external-url="https://arxiv.org/abs/2305.14314">QLoRA</a>'
+        )
+        assert prepare_docs.linkify(
+            "[未下载](https://arxiv.org/abs/9999.12345)",
+            PurePosixPath("papers/example.md"),
+            task,
+        ) == "[未下载](https://arxiv.org/abs/9999.12345)"
         assert prepare_docs.linkify(
             "[`sources/framework-hf-peft/`](../sources/framework-hf-peft/index.md)",
             PurePosixPath("papers/example.md"),

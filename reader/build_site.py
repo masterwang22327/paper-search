@@ -35,6 +35,7 @@ def site_input_fingerprint(task_id: str) -> str:
         "citation-overrides.yml",
         "requirements.txt",
         "build_site.py",
+        "hooks.py",
         "site_store.py",
         "task_store.py",
         "scripts/prepare_docs.py",

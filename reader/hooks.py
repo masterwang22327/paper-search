@@ -40,7 +40,7 @@ class BlockAnnotator(HTMLParser):
             else:
                 self.counter += 1
                 block_id = f"b{self.counter:05d}"
-            block = {"id": block_id, "tag": tag, "text": []}
+            block = {"id": block_id, "tag": tag, "text": [], "anchor": dict(attrs).get("id", "")}
             if tag == "li" and self.list_stack:
                 block["semantic_id"] = self.list_stack[-1]["id"]
                 self.list_stack[-1]["item_ids"].append(block_id)
@@ -93,9 +93,26 @@ def on_page_content(html: str, page, **kwargs) -> str:
     annotator = BlockAnnotator()
     annotator.feed(html)
     annotator.close()
+    outline = []
+    heading_path = []
+    block_sections = {}
+    for block in annotator.blocks:
+        if block["tag"] in {"h1", "h2", "h3", "h4", "h5", "h6"}:
+            level = int(block["tag"][1])
+            heading_path = [heading for heading in heading_path if heading["level"] < level]
+            heading = {
+                "block_id": block["id"], "level": level,
+                "title": "".join(block["text"]).rstrip("¶").strip(),
+                "anchor": block["anchor"],
+            }
+            heading_path.append(heading)
+            outline.append(heading)
+        block_sections[block["id"]] = [heading["block_id"] for heading in heading_path]
     digest = hashlib.sha256(html.encode("utf-8")).hexdigest()
     MANIFEST[document_id] = {
         "sha256": digest,
+        "outline": outline,
+        "block_sections": block_sections,
         "blocks": {block["id"]: "".join(block["text"]) for block in annotator.blocks},
         "block_to_semantic": {block["id"]: block["semantic_id"] for block in annotator.blocks},
         "semantic_blocks": [

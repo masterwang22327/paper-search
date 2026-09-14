@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="600" viewBox="0 0 1600 600" role="img" aria-labelledby="title desc">
+  <title id="title">First packet latency and real-time factor</title>
+  <desc id="desc">The first audio packet is produced only after queueing, text processing, chunking, reference conditioning, flow integration, vocoding, serialization and sending.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#5f6b76"/></marker>
+    <style>
+      .title{font:700 34px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#18212b}.sub{font:22px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#5f6b76}.box{stroke:#9da7af;stroke-width:2}.label{font:700 19px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#18212b;text-anchor:middle}.edge{stroke:#5f6b76;stroke-width:3;fill:none;marker-end:url(#arrow)}.formula{font:23px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#18212b}
+    </style>
+  </defs>
+  <rect width="1600" height="600" fill="#fff"/>
+  <text class="title" x="55" y="68">Why low RTF does not guarantee a short first packet</text>
+  <text class="sub" x="55" y="110">The first playable bytes arrive only after every stage on the critical path finishes.</text>
+
+  <rect class="box" x="55" y="205" rx="13" width="155" height="100" fill="#edf0f2"/><text class="label" x="132" y="263">queue</text>
+  <rect class="box" x="250" y="205" rx="13" width="155" height="100" fill="#faedc5"/><text class="label" x="327" y="263">TN / G2P</text>
+  <rect class="box" x="445" y="205" rx="13" width="155" height="100" fill="#faedc5"/><text class="label" x="522" y="263">chunking</text>
+  <rect class="box" x="640" y="205" rx="13" width="175" height="100" fill="#d9efec"/><text class="label" x="727" y="250">reference</text><text class="label" x="727" y="276">condition</text>
+  <rect class="box" x="855" y="205" rx="13" width="175" height="100" fill="#f7dfd8"/><text class="label" x="942" y="263">flow x NFE</text>
+  <rect class="box" x="1070" y="205" rx="13" width="155" height="100" fill="#d9efec"/><text class="label" x="1147" y="263">vocoder</text>
+  <rect class="box" x="1265" y="205" rx="13" width="175" height="100" fill="#edf0f2"/><text class="label" x="1352" y="250">serialize</text><text class="label" x="1352" y="276">+ send</text>
+  <path class="edge" d="M210 255 H245"/><path class="edge" d="M405 255 H440"/><path class="edge" d="M600 255 H635"/><path class="edge" d="M815 255 H850"/><path class="edge" d="M1030 255 H1065"/><path class="edge" d="M1225 255 H1260"/>
+  <line x1="1468" y1="170" x2="1468" y2="350" stroke="#cc5b45" stroke-width="4"/>
+  <text x="1468" y="153" text-anchor="middle" style="font:700 20px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;fill:#cc5b45">FIRST PACKET</text>
+  <path d="M1220 378 C1300 378 1370 365 1460 335" stroke="#cc5b45" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
+  <text x="1210" y="400" text-anchor="middle" style="font:700 20px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;fill:#cc5b45">TTFB includes the full path to this boundary</text>
+
+  <rect x="55" y="445" width="1490" height="105" rx="14" fill="#f5f7f8"/>
+  <text class="formula" x="80" y="486">T(first) = T(queue) + T(text) + T(ref) + T(first-chunk flow) + T(vocoder) + T(send)</text>
+  <text x="80" y="525" style="font:700 21px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;fill:#177c78">RTF = total generation time / generated audio duration</text>
+  <text x="760" y="525" style="font:20px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;fill:#5f6b76">Smaller packets change sending; they do not remove earlier flow or vocoder work.</text>
+</svg>

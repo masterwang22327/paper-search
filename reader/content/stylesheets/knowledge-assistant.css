@@ -145,6 +145,7 @@
 
 .knowledge-rich-text p { margin: 0 0 0.7rem; }
 
+.knowledge-rich-text h1,
 .knowledge-rich-text h2,
 .knowledge-rich-text h3,
 .knowledge-rich-text h4 {
@@ -153,6 +154,7 @@
   line-height: 1.4;
 }
 
+.knowledge-rich-text h1 { font-size: 1.05rem; }
 .knowledge-rich-text h2 { font-size: 1rem; }
 .knowledge-rich-text h3 { font-size: 0.9rem; }
 .knowledge-rich-text h4 { font-size: 0.84rem; }
@@ -193,7 +195,16 @@
 
 .knowledge-rich-text pre code { padding: 0; background: transparent; white-space: pre; }
 
+.knowledge-rich-text .knowledge-math-error {
+  color: var(--md-default-fg-color--light);
+  font-family: var(--md-code-font-family, monospace);
+  font-size: 0.9em;
+  white-space: pre-wrap;
+}
+
 .knowledge-math-block {
+  display: block;
+  width: 100%;
   max-width: 100%;
   margin: 0.8rem 0;
   overflow-x: auto;
@@ -648,8 +659,8 @@
   border-left: 0.25rem solid var(--md-primary-fg-color);
   border-radius: 0.45rem;
   background: color-mix(in srgb, var(--md-primary-fg-color) 5%, var(--md-default-bg-color));
-  font-size: 0.68rem;
-  line-height: 1.6;
+  font-size: 0.82rem;
+  line-height: 1.78;
 }
 
 .reader-revision > header {
@@ -686,11 +697,25 @@
 }
 
 .reader-revision__content > :first-child { margin-top: 0; }
+.reader-revision__context {
+  display: block;
+  max-width: 100%;
+  margin: 0 0 0.65rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--md-primary-fg-color);
+  font: inherit;
+  font-size: 0.65rem;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
 .reader-revision__content > :last-child { margin-bottom: 0; }
-.reader-revision__content h2 { font-size: 0.78rem; }
-.reader-revision__content h3 { font-size: 0.74rem; }
-.reader-revision__content h4 { font-size: 0.7rem; }
-.reader-revision__content .knowledge-markdown-table table { font-size: 0.62rem; }
+.reader-revision__content h2 { font-size: 1.08rem; }
+.reader-revision__content h3 { font-size: 0.96rem; }
+.reader-revision__content h4 { font-size: 0.88rem; }
+.reader-revision__content .knowledge-markdown-table table { font-size: 0.76rem; }
 .reader-revision__content .knowledge-markdown-table th,
 .reader-revision__content .knowledge-markdown-table td { padding: 0.4rem 0.5rem; }
 .reader-revision > .knowledge-diagram { font-size: 0.64rem; }
@@ -721,6 +746,7 @@
 
 .reader-revision > footer {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.7rem;
   justify-content: space-between;
   align-items: center;
@@ -737,6 +763,10 @@
   color: var(--md-primary-fg-color);
   background: transparent;
   cursor: pointer;
+}
+
+.reader-revision__continue {
+  margin-left: auto;
 }
 
 .reader-manual-block-original,
@@ -802,12 +832,16 @@
   background: rgb(0 0 0 / 45%);
 }
 
+body.reader-modal-open {
+  overflow: hidden;
+}
+
 .reader-revision-editor__dialog {
   width: min(760px, 100%);
   max-height: min(86vh, 900px);
   overflow: auto;
   padding: 1.15rem;
-  border-radius: 0.65rem;
+  border-radius: 0.4rem;
   background: var(--md-default-bg-color);
   box-shadow: var(--md-shadow-z3);
 }
@@ -847,10 +881,8 @@
 
 .reader-revision-turn {
   margin: 0.85rem 0;
-  padding: 0.75rem;
-  border: 1px solid var(--md-default-fg-color--lightest);
-  border-radius: 0.5rem;
-  background: color-mix(in srgb, var(--md-primary-fg-color) 3%, var(--md-default-bg-color));
+  padding: 0.75rem 0;
+  border-top: 1px solid var(--md-default-fg-color--lightest);
 }
 
 .reader-revision-turn__question {
@@ -874,11 +906,17 @@
 }
 
 .reader-revision-editor__actions {
+  position: sticky;
+  z-index: 2;
+  bottom: -1.15rem;
   display: flex;
   flex-wrap: wrap;
   gap: 0.55rem;
   justify-content: flex-end;
   margin-top: 1rem;
+  padding: 0.7rem 0 1.15rem;
+  border-top: 1px solid var(--md-default-fg-color--lightest);
+  background: var(--md-default-bg-color);
 }
 
 .reader-revision-editor__actions button {
@@ -1080,7 +1118,7 @@
   gap: 0.75rem;
   overflow: auto;
   padding: 1rem;
-  border-radius: 0.6rem;
+  border-radius: 0.4rem;
   background: var(--md-default-bg-color);
   box-shadow: var(--md-shadow-z3);
 }
@@ -1108,9 +1146,14 @@
 .knowledge-faq-editor__dialog textarea[name="note"] { min-height: 4.5rem; }
 
 .knowledge-faq-editor__actions {
+  position: sticky;
+  bottom: -1rem;
   display: flex;
   justify-content: flex-end;
   gap: 0.5rem;
+  padding: 0.65rem 0 1rem;
+  border-top: 1px solid var(--md-default-fg-color--lightest);
+  background: var(--md-default-bg-color);
 }
 
 .knowledge-faq-editor__actions button {

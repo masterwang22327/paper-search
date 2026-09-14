@@ -4,6 +4,8 @@
   const storageKey = "research-reader-navigation-collapsed";
   let toggle;
   let sectionTools;
+  let tableResizeObserver;
+  let sectionResizeObserver;
   let scrollHandler;
   let clickHandler;
   let readingMemo;
@@ -738,6 +740,81 @@
     }
   }
 
+  function simplifySidebar() {
+    const sidebar = document.querySelector(".md-sidebar--primary");
+    if (!sidebar) return;
+    const titles = {
+      "deepseek-v2-v3-r1-lineage": "DeepSeek 系列演进",
+      "llama1-llama2-llama31-lineage": "LLaMA 系列演进",
+      "qwen2-qwen25-qwen3-lineage": "Qwen 系列演进"
+    };
+    sidebar.querySelectorAll("a.md-nav__link").forEach(link => {
+      const url = new URL(link.href);
+      if (url.hash || !url.pathname.includes("/papers/")) return;
+      const label = link.querySelector(".md-ellipsis");
+      if (!label) return;
+      const full = link.title || label.textContent.trim();
+      const slug = url.pathname.split("/").filter(Boolean).pop();
+      const prefix = full.match(/^\d+\s*·\s*/)?.[0] || "";
+      const short = titles[slug] ? prefix + titles[slug] : full.split(/[：:]/)[0];
+      link.title = full;
+      link.setAttribute("aria-label", full);
+      label.textContent = short;
+      link.classList.add("reader-nav-paper");
+    });
+    sidebar.querySelectorAll(".md-nav__item--nested").forEach(item => {
+      const label = item.querySelector(":scope > label");
+      if (!/^阶段\s*\d+/.test(label?.textContent.trim() || "")) return;
+      const input = item.querySelector(":scope > input");
+      if (input) input.checked = item.classList.contains("md-nav__item--active");
+    });
+  }
+
+  function simplifyHeaderTitle(documentId) {
+    const topic = document.querySelector('[data-md-component="header-topic"] .md-ellipsis');
+    if (!topic || !documentId.startsWith("papers/")) return;
+    const slug = documentId.split("/").pop().replace(/\.md$/, "");
+    const titles = {
+      "deepseek-v2-v3-r1-lineage": "66 · DeepSeek 系列演进",
+      "llama1-llama2-llama31-lineage": "64 · LLaMA 系列演进",
+      "qwen2-qwen25-qwen3-lineage": "65 · Qwen 系列演进"
+    };
+    const full = topic.title || topic.textContent.trim();
+    topic.title = full;
+    topic.textContent = titles[slug] || full.split(/[：:]/)[0];
+  }
+
+  function prepareReadingTables(article) {
+    tableResizeObserver?.disconnect();
+    if (!article) return;
+    tableResizeObserver = new ResizeObserver(entries => {
+      entries.forEach(({ target }) => {
+        const overflowing = target.scrollWidth > target.clientWidth + 2;
+        const hint = target.nextElementSibling;
+        if (hint?.classList.contains("reader-table-hint")) hint.hidden = !overflowing;
+        target.tabIndex = overflowing ? 0 : -1;
+      });
+    });
+    article.querySelectorAll("table").forEach(table => {
+      if (!table.querySelector("[data-reader-block]")) return;
+      const wrapper = table.closest(".md-typeset__scrollwrap");
+      if (!wrapper) return;
+      wrapper.classList.add("reader-table-scroll");
+      wrapper.classList.toggle("reader-table-compact", table.rows[0]?.cells.length <= 3);
+      wrapper.setAttribute("role", "region");
+      wrapper.setAttribute("aria-label", "正文表格，可横向滚动查看");
+      let hint = wrapper.nextElementSibling;
+      if (!hint?.classList.contains("reader-table-hint")) {
+        hint = document.createElement("div");
+        hint.className = "reader-table-hint";
+        hint.textContent = "左右滑动查看完整表格 ↔";
+        hint.hidden = true;
+        wrapper.after(hint);
+      }
+      tableResizeObserver.observe(wrapper);
+    });
+  }
+
   function initialize() {
     cleanupReadingProgress();
     const documentMeta = document.querySelector(".reader-document-meta");
@@ -745,6 +822,9 @@
     const researchPage = documentId.startsWith("papers/") || documentId === "report/index.md";
     document.body.classList.toggle("reader-research-page", researchPage);
     const article = document.querySelector(".md-content__inner");
+    simplifySidebar();
+    simplifyHeaderTitle(documentId);
+    requestAnimationFrame(() => prepareReadingTables(article));
     const headings = Array.from(article?.querySelectorAll("h2[id]") || []);
     if (document.querySelector(".md-sidebar--primary") && !toggle) {
       toggle = document.createElement("button");
@@ -763,6 +843,7 @@
   }
 
   function buildSectionTools() {
+    sectionResizeObserver?.disconnect();
     sectionTools?.remove();
     if (scrollHandler) window.removeEventListener("scroll", scrollHandler);
     if (clickHandler) document.removeEventListener("click", clickHandler);
@@ -785,6 +866,13 @@
     ].join("");
     const anchor = article.querySelector(".paper-reading-card") || article.querySelector("h1");
     anchor?.insertAdjacentElement("afterend", sectionTools);
+    const updateClearance = () => {
+      const top = parseFloat(getComputedStyle(sectionTools).top) || 0;
+      article.style.setProperty("--reader-scroll-clearance", `${top + sectionTools.offsetHeight + 24}px`);
+    };
+    sectionResizeObserver = new ResizeObserver(updateClearance);
+    sectionResizeObserver.observe(sectionTools);
+    updateClearance();
 
     const menu = sectionTools.querySelector(".reader-section-tools__menu");
     headings.forEach((heading, index) => {
@@ -806,7 +894,7 @@
     const next = sectionTools.querySelector('[data-section-step="next"]');
 
     function render() {
-      const marker = window.scrollY + 150;
+      const marker = window.scrollY + (parseFloat(getComputedStyle(article).getPropertyValue("--reader-scroll-clearance")) || 150) + 2;
       activeIndex = 0;
       headings.forEach((heading, index) => {
         if (heading.getBoundingClientRect().top + window.scrollY <= marker) activeIndex = index;

@@ -58,10 +58,25 @@ if schema_name == "faq.schema.json":
                 {
                     "question": "为什么训练并行不等于生成并行？",
                     "answer": "训练时目标序列已知，可并行计算各位置损失；自回归生成必须等待前一 token。",
+                    "visualization": None,
+                    "visual_html": None,
                     "knowledge_type": "mixed",
                     "evidence": [{"source_id": "arxiv-1706.03762v7", "page": 3}],
                 }
             ]
+        },
+        ensure_ascii=False,
+    )
+elif schema_name == "knowledge-answer.schema.json":
+    answer = json.dumps(
+        {
+            "content": r"这是 fake Codex 的测试回答，已验证正文选区与固定 PDF 上下文。公式为 \(y=x^2\)。",
+            "visualization": None,
+            "visual_html": """
+<style>button{padding:8px 12px} output{margin-left:8px;font-weight:700}</style>
+<button id="increment" type="button">增加</button><output id="value">0</output>
+<script>increment.addEventListener('click',()=>value.textContent=String(Number(value.textContent)+1))</script>
+""".strip(),
         },
         ensure_ascii=False,
     )

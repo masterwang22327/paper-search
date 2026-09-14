@@ -434,6 +434,56 @@ def check_site_fingerprint() -> None:
             reader_build.READER_DIR = previous_reader
 
 
+def check_manifest_refresh() -> None:
+    """A running Reader sees a manifest from a database rebuilt in place."""
+    with tempfile.TemporaryDirectory() as temporary:
+        task_dir = Path(temporary)
+        paper = task_dir / "papers" / "paper.md"
+        paper.parent.mkdir(parents=True)
+        paper.write_text("# Paper\n", encoding="utf-8")
+
+        class FakeSiteStore:
+            def __init__(self) -> None:
+                self.manifest = {
+                    "documents": {"papers/paper.md": {"sha256": "sha-a", "blocks": {}}}
+                }
+
+            def load_json(self, key, default):
+                assert key == "context-manifest.json"
+                return self.manifest
+
+        state = reader_server.ReaderState.__new__(reader_server.ReaderState)
+        state.task_dir = task_dir
+        state.site_manifest = {}
+        state.site_store = FakeSiteStore()
+        assert state.manifest_document("papers/paper.md", "sha-a")["sha256"] == "sha-a"
+
+        state.site_store.manifest = {
+            "documents": {"papers/paper.md": {"sha256": "sha-b", "blocks": {}}}
+        }
+        assert state.manifest_document("papers/paper.md", "sha-b")["sha256"] == "sha-b"
+        assert state.site_manifest["documents"]["papers/paper.md"]["sha256"] == "sha-b"
+
+
+def check_empty_pdf_metadata() -> None:
+    """Empty PDF fields must not consume the following metadata line."""
+    with tempfile.TemporaryDirectory() as temporary:
+        source = Path(temporary)
+        state = reader_server.ReaderState.__new__(reader_server.ReaderState)
+        state.source_metadata_cache = {}
+        state.source_pdf = lambda source_id: source / "paper.pdf"
+        state.file_sha256 = lambda path: "a" * 64
+        state.pdf_page_count = lambda path: 17
+        artifacts = {
+            "pdfinfo.txt": "Title:           \nSubject:         \nAuthor:          \nCreator: LaTeX\n",
+            "evidence.md": "# F5-TTS — Evidence map\n\n- Stable ID: arxiv-2410.06885v3\n",
+        }
+        state.task_artifact_text = lambda path, limit: artifacts.get(path.name)
+        metadata = state.source_metadata("arxiv-2410.06885v3")
+        assert metadata["title"] == "F5-TTS"
+        assert metadata["authors"] == []
+
+
 def main() -> None:
     check_translation_store()
     check_legacy_history_migration()
@@ -443,6 +493,8 @@ def main() -> None:
     check_task_artifact_store()
     check_site_store()
     check_site_fingerprint()
+    check_manifest_refresh()
+    check_empty_pdf_metadata()
     print("Compact storage checks passed")
 
 

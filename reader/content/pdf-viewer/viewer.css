@@ -29,6 +29,7 @@ body {
   flex: none;
   min-height: 2.35rem;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.3rem;
   padding: 0.22rem 0.55rem;
@@ -172,6 +173,157 @@ body {
   flex-direction: row;
 }
 
+.toolbar #insight-toggle {
+  min-width: 3.2rem;
+  border-color: #b7ccc6;
+  color: #17634f;
+  background: #fff;
+  font-weight: 650;
+}
+
+.toolbar #insight-toggle.is-active {
+  color: #fff;
+  background: #17634f;
+}
+
+.insight-panel {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  width: var(--insight-panel-width, clamp(300px, 40%, 480px));
+  max-width: calc(62% - 8px);
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  color: #292929;
+  background: #fff;
+  border-left: 1px solid #d6dedb;
+  font-size: 0.82rem;
+  line-height: 1.6;
+  letter-spacing: 0;
+}
+
+.insight-header {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  flex: none;
+  gap: 0.8rem;
+  padding: 0.85rem 1rem 0.6rem;
+  background: #f5f8f7;
+}
+
+.insight-header > strong {
+  width: 100%;
+  min-height: 1.8rem;
+  padding-right: 2rem;
+  flex-shrink: 0;
+  font-size: 0.85rem;
+}
+
+.insight-settings {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 5.2rem;
+  width: 100%;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.insight-header select,
+.insight-header button {
+  max-width: 100%;
+  min-height: 1.8rem;
+  border: 1px solid #c8cfcc;
+  border-radius: 4px;
+  padding: 0.15rem 0.4rem;
+  color: inherit;
+  background: #fff;
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+#insight-model { width: 100%; }
+#insight-effort { width: 100%; }
+#generate-insight { grid-column: 1 / -1; min-height: 2rem; color: #fff; border-color: #17634f; background: #17634f; }
+#generate-insight:disabled { opacity: 0.55; cursor: wait; }
+
+.insight-header .insight-close {
+  position: absolute;
+  top: 0.55rem;
+  right: 0.6rem;
+  width: 1.8rem;
+  height: 1.8rem;
+  padding: 0;
+  font-size: 1rem;
+}
+
+.insight-status {
+  flex: none;
+  padding: 0.25rem 1rem 0.6rem;
+  color: #666;
+  background: #f5f8f7;
+  font-size: 0.72rem;
+  overflow-wrap: anywhere;
+}
+
+.insight-status.is-error { color: #a12b27; }
+.insight-content { flex: 1; min-height: 0; overflow: auto; padding: 0.3rem 1rem 1rem; overflow-wrap: anywhere; }
+.insight-content:empty { padding: 0; }
+.insight-summary { padding-top: 0.5rem; }
+.insight-labels { display: flex; flex-wrap: wrap; gap: 0.4rem 0.8rem; align-items: baseline; }
+.insight-priority { color: #17634f; }
+.insight-priority.is-low, .insight-types { color: #666; }
+.insight-priority.is-uncertain { color: #8b650b; }
+.insight-main { font-weight: 600; font-size: 0.93rem; line-height: 1.75; }
+.insight-reason, .insight-evidence { color: #666; }
+.insight-content p { margin: 0.35rem 0; }
+.insight-details { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.85rem; padding: 0.85rem 0; }
+.insight-section { min-width: 0; border-top: 1px solid #e5e9e7; padding-top: 0.75rem; }
+.insight-section h3 { margin: 0; font-size: 0.78rem; color: #17634f; }
+.insight-analysis h3 { font-size: 0.91rem; line-height: 1.65; }
+.insight-prose { font-size: 0.88rem; line-height: 1.85; }
+.insight-prose p { margin: 0.7rem 0; white-space: pre-wrap; }
+.insight-prose .insight-evidence { line-height: 1.65; margin-top: 0.65rem; }
+.insight-takeaways { padding-left: 1.3rem; line-height: 1.85; }
+.insight-source-anchor { display: block; width: auto; max-width: 100%; text-align: left; margin: 0.4rem 0; padding: 0.15rem 0; border: 0; border-bottom: 1px dotted #8aaea1; border-radius: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.insight-original-meaning { font-weight: 650; line-height: 1.8; }
+.insight-references { margin-top: 0.6rem; font-size: 0.73rem; color: #666; }
+.insight-references summary { cursor: pointer; }
+.insight-source-anchor:hover { background: #e8f0ed; }
+.insight-source-location { display: block; font-size: 0.72rem; color: #52685f; }
+.insight-source-quote { display: block; font-size: 0.8rem; line-height: 1.7; margin-top: 0.3rem; }
+.insight-step-label { margin: 0.8rem 0 0; font-size: 0.76rem; color: #52685f; }
+.pdf-insight-highlight { position: absolute; pointer-events: auto; z-index: 5; padding: 0; border: 1px solid rgb(183 144 41 / 45%); border-radius: 0; background: transparent; cursor: pointer; }
+.pdf-insight-highlight:hover, .pdf-insight-highlight:focus-visible, .pdf-insight-highlight.is-selected { background: rgb(234 190 66 / 20%); outline: 2px solid #b79029; }
+.insight-analysis.is-selected { border-left: 3px solid #43816b; padding-left: 0.65rem; background: rgb(67 129 107 / 6%); }
+@media (prefers-color-scheme: dark) {
+  .insight-source-anchor { background: #303a35; }
+  .insight-source-anchor:hover { background: #3c4942; }
+  .insight-source-location, .insight-step-label { color: #b5cabe; }
+}
+.insight-section ul { margin: 0.35rem 0 0; padding-left: 1.2rem; }
+.insight-section li + li { margin-top: 0.45rem; }
+.insight-kind { color: #666; margin-right: 0.5rem; font-size: 0.72rem; }
+.insight-evidence { display: block; font-size: 0.7rem; }
+.insight-anchors strong { font-weight: 550; margin-right: 0.6rem; }
+.insight-anchors span { color: #666; font-size: 0.72rem; }
+.insight-caveats h3 { color: #8b650b; }
+
+@media (prefers-color-scheme: dark) {
+  .insight-panel { color: #eee; background: #242424; border-color: #425f55; }
+  .insight-header, .insight-status { background: #2b302e; }
+  .insight-header select, .insight-header button { color: #eee; background: #333; border-color: #59615d; }
+  .insight-priority, .insight-section h3 { color: #92cfb6; }
+  .insight-status, .insight-types, .insight-reason, .insight-evidence,
+  .insight-kind, .insight-anchors span, .insight-priority.is-low { color: #bbb; }
+  .insight-status.is-error { color: #ffaaa5; }
+  .insight-priority.is-uncertain, .insight-caveats h3 { color: #e7ce8a; }
+  .insight-section { border-color: #414743; }
+}
+
 .viewport {
   position: relative;
   min-width: 0;
@@ -199,7 +351,6 @@ body {
   border-left: 1px solid #c9c9c9;
   background: #ececec;
   cursor: col-resize;
-  touch-action: none;
 }
 
 .translation-resizer::after {

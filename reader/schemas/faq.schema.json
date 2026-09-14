@@ -11,7 +11,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["question", "answer", "visualization", "evidence", "knowledge_type"],
+        "required": ["question", "answer", "visualization", "visual_html", "evidence", "knowledge_type"],
         "properties": {
           "question": {"type": "string", "minLength": 4, "maxLength": 300},
           "answer": {"type": "string", "minLength": 10, "maxLength": 5000},
@@ -53,6 +53,7 @@
               }
             ]
           },
+          "visual_html": {"type": ["string", "null"], "maxLength": 40000},
           "knowledge_type": {
             "type": "string",
             "enum": ["source_fact", "engineering_explanation", "mixed", "uncertain"]

@@ -3,7 +3,14 @@
 # not receive a canonical reading-card/route position until a human admission
 # decision is recorded.
 version: 1
-canonical_count: 67
+canonical_count: 73
+archived:
+  - arxiv-2412.19437.md
+  # Merged into embedding-models-lineage-selection.md; historical URLs remain readable.
+  - sentence-embeddings-semantic-retrieval.md
+  - general-text-embedding-training.md
+  - llm-embedding-qwen-mistral.md
+  - code-embedding-retrieval.md
 candidates:
   - file: agentic-rl-next-directions.md
     reason: "方向发现页；它汇总候选问题，但不是一篇完成来源准入的精读。"

@@ -172,6 +172,112 @@ def check_codex_error_messages() -> None:
     )
 
 
+def check_visualization_fence_compatibility() -> None:
+    visualization = {
+        "title": "信息流",
+        "caption": "兼容模型曾经输出的围栏信息字符串。",
+        "nodes": [
+            {"id": "input", "label": "输入", "detail": "token states"},
+            {"id": "output", "label": "输出", "detail": "attention result"},
+        ],
+        "edges": [{"from": "input", "to": "output", "label": "attention"}],
+    }
+    for fence in ("reader-diagram", "reader-diagram JSON", "reader-diagram json"):
+        answer = f"正文\n\n```{fence}\n{json.dumps(visualization, ensure_ascii=False)}\n```"
+        cleaned, parsed = reader_server.ReaderState.extract_visualization(answer)
+        assert cleaned == "正文"
+        assert parsed == visualization
+
+
+def check_knowledge_answer_validation() -> None:
+    raw = json.dumps({
+        "content": r"比较 \(f(x)\) 的曲线。",
+        "visualization": None,
+        "visual_html": "<canvas id='plot'></canvas><script>plot.width=320</script>",
+    }, ensure_ascii=False)
+    parsed = reader_server.ReaderState.parse_knowledge_json(f"```json\n{raw}\n```")
+    result = reader_server.ReaderState.validate_knowledge_result(parsed)
+    assert result["content"].startswith("比较")
+    assert "<canvas" in result["visual_html"]
+    try:
+        reader_server.ReaderState.validate_knowledge_result({
+            "content": "有效正文",
+            "visualization": None,
+            "visual_html": "x" * 40_001,
+        })
+        raise AssertionError("oversized knowledge visual HTML was accepted")
+    except reader_server.ApiError as error:
+        assert error.status == 502
+    legacy = "说明文字\n\n```html\n<canvas id='plot'></canvas><script>plot.width=320</script>\n```"
+    legacy_content, legacy_visual = reader_server.ReaderState.extract_legacy_visual_html(legacy)
+    assert legacy_content == "说明文字"
+    assert legacy_visual.startswith("<canvas")
+    recovered = reader_server.ReaderState.validate_knowledge_result({
+        "content": legacy,
+        "visualization": None,
+        "visual_html": None,
+    })
+    assert recovered["content"] == "说明文字"
+    assert recovered["visual_html"] == legacy_visual
+    example = "示例代码\n\n```html\n<strong>保持为普通代码</strong>\n```"
+    assert reader_server.ReaderState.extract_legacy_visual_html(example) == (example, None)
+
+
+def check_gpt4_priority_source_policy() -> None:
+    document_id = reader_server.GPT4_DOCUMENT_ID
+    assert reader_server.ReaderState.priority_question_matches(document_id, "精读 GPT-4 技术报告")
+    assert reader_server.ReaderState.priority_question_matches(document_id, "arXiv:2303.08774")
+    assert not reader_server.ReaderState.priority_question_matches(document_id, "GPT-5 产品能力")
+    assert not reader_server.ReaderState.priority_question_matches("papers/arxiv-1706.03762.md", "GPT-4")
+
+    state = reader_server.ReaderState.__new__(reader_server.ReaderState)
+    state.ensure_priority_source = lambda source_id: {
+        "source_id": source_id,
+        "status": "available",
+        "page_count": 99,
+    }
+    state.validate_pdf = lambda value: {
+        "source_id": value["source_id"],
+        "page": int(value["page"]),
+    }
+    contexts, status = state.priority_pdf_contexts(
+        document_id,
+        "请解释 GPT-4 Technical Report 的 scaling 实验",
+        [{"source_id": "arxiv-2303.08774v1", "page": 3}, {"source_id": "arxiv-1706.03762v7", "page": 8}],
+    )
+    assert status["status"] == "available"
+    assert [item["page"] for item in contexts] == [2, 3, 4, 5, 8]
+
+    contexts, status = state.priority_pdf_contexts(
+        document_id,
+        "请解释 GPT-4 Technical Report",
+        [{"source_id": "user", "page": page} for page in range(1, 7)],
+    )
+    assert len(contexts) == reader_server.MAX_PDF_CONTEXTS
+    assert [item["page"] for item in contexts[:4]] == [2, 3, 4, 5]
+
+    state.ensure_priority_source = lambda source_id: {"source_id": source_id, "status": "unavailable", "reason": "网络失败"}
+    contexts, status = state.priority_pdf_contexts(document_id, "GPT-4 技术报告", [])
+    assert contexts == []
+    assert status["status"] == "unavailable"
+
+    with tempfile.TemporaryDirectory() as temporary:
+        bad_state = reader_server.ReaderState.__new__(reader_server.ReaderState)
+        bad_state.task_dir = Path(temporary)
+        bad_state.pdfinfo_bin = "/usr/bin/false"
+        bad_state.pdftotext_bin = None
+        bad_state.translation_ssl_context = None
+        bad_state.source_metadata_cache = {}
+        bad_state.priority_source_status = {}
+        bad_pdf = bad_state.task_dir / "sources" / "arxiv-2303.08774v1" / "paper.pdf"
+        bad_pdf.parent.mkdir(parents=True)
+        bad_pdf.write_bytes(b"not a pdf")
+        with mock.patch.object(reader_server, "urlopen", side_effect=reader_server.URLError("offline")):
+            result = bad_state.ensure_priority_source("arxiv-2303.08774v1")
+        assert result["status"] == "unavailable"
+        assert bad_pdf.read_bytes() == b"not a pdf"
+
+
 def check_full_translation_terminal_state() -> None:
     assert reader_server.FULL_TRANSLATION_CONCURRENCY == 16
 
@@ -303,7 +409,9 @@ def check_retranslation_compact_fallback() -> None:
 
         assert len(calls) == 2
         full_prompt, compact_prompt = calls[0]["prompt"], calls[1]["prompt"]
-        assert "FULL WORKFLOW CONTEXT" in full_prompt
+        assert "FULL WORKFLOW CONTEXT" not in full_prompt
+        assert "FULL WORKFLOW CONTEXT" in calls[0]["system_prompt"]
+        assert "FULL WORKFLOW CONTEXT" in calls[1]["system_prompt"]
         assert "PREVIOUS PAGE CONTEXT" in full_prompt
         assert "NEXT PAGE CONTEXT" in full_prompt
         assert "unused-context-term" in full_prompt
@@ -352,6 +460,15 @@ def check_translation_json_recovery() -> None:
     assert reader_server.ReaderState.parse_translation_json(
         f"下面是结果：\n{encoded}\n以上。"
     ) == answer
+    truncated_with_complete_block = (
+        '{"blocks":[{"type":"paragraph","original_text":"First paragraph",'
+        '"translation":"第一段","confidence":"high","bbox":null,"refs":[]}'
+    )
+    try:
+        reader_server.ReaderState.parse_translation_json(truncated_with_complete_block)
+        raise AssertionError("nested block from truncated response was accepted as the page")
+    except reader_server.ApiError as error:
+        assert error.status == 502
     try:
         reader_server.ReaderState.parse_translation_json("{\"translation\": \"截断")
         raise AssertionError("malformed JSON was accepted")
@@ -389,6 +506,49 @@ def check_translation_json_recovery() -> None:
     assert normalized["blocks"][0]["type"] == "figure"
     assert any("规范为图片块" in warning for warning in normalized["warnings"])
 
+    incomplete_source = "\n\n".join(
+        f"Section {index}. This paragraph explains a distinct part of the method and its result."
+        for index in range(1, 35)
+    )
+    incomplete = state.validate_translation_result(
+        {
+            "translation": "这里只翻译了第一页顶部的一小部分。",
+            "blocks": [
+                {
+                    "type": "paragraph",
+                    "original_text": incomplete_source,
+                    "translation": "这里只翻译了第一页顶部的一小部分。",
+                    "confidence": "medium",
+                    "bbox": None,
+                    "refs": [],
+                    "table_data": None,
+                    "figure_data": None,
+                }
+            ],
+            "glossary_updates": [],
+            "warnings": [],
+        },
+        incomplete_source,
+        2,
+    )
+    try:
+        state.validate_translation_completeness(incomplete, incomplete_source)
+        raise AssertionError("partial page translation was accepted")
+    except reader_server.ApiError as error:
+        assert error.status == 502
+
+    complete = {
+        **incomplete,
+        "translation": "完整译文。" * 180,
+        "blocks": [
+            {
+                **incomplete["blocks"][0],
+                "translation": "完整译文。" * 180,
+            }
+        ],
+    }
+    state.validate_translation_completeness(complete, incomplete_source)
+
 
 def free_port() -> int:
     with socket.socket() as sock:
@@ -418,9 +578,12 @@ def wait(url: str) -> None:
     raise RuntimeError("server did not start")
 
 
-def run() -> None:
+def run(selected_model: str = "gpt-5.6-sol") -> None:
     check_translation_api_key_policy()
     check_codex_error_messages()
+    check_visualization_fence_compatibility()
+    check_knowledge_answer_validation()
+    check_gpt4_priority_source_policy()
     check_full_translation_terminal_state()
     check_retranslation_compact_fallback()
     check_translation_json_recovery()
@@ -478,6 +641,20 @@ def run() -> None:
             wait(f"{origin}/api/bootstrap")
             bootstrap = request(f"{origin}/api/bootstrap")
             token = bootstrap["token"]
+            for endpoint in ("/api/chat/settings", "/api/revision/settings"):
+                for effort in ("low", "medium", "high", "xhigh", "max"):
+                    saved = request(f"{origin}{endpoint}", "POST", {
+                        "document_id": document_id, "model": "gpt-6-astra", "effort": effort,
+                    }, token)
+                    assert saved["model"] == "gpt-6-astra"
+                    assert saved["effort"] == effort
+                try:
+                    request(f"{origin}{endpoint}", "POST", {
+                        "document_id": document_id, "model": "gpt-6-astra", "effort": "ultra",
+                    }, token)
+                    raise AssertionError("unsupported Astra effort accepted")
+                except urllib.error.HTTPError as error:
+                    assert error.code == 400
             knowledge_settings = request(
                 f"{origin}/api/chat/settings",
                 "POST",
@@ -528,11 +705,12 @@ def run() -> None:
             assert first["knowledge_settings"]["effort"] == "ultra"
             assert first["messages"][0]["contexts"][0]["text"] == selected
             assert [item["page"] for item in first["messages"][0]["pdf_contexts"]] == [3, 4]
+            assert "<button" in first["messages"][1]["visual_html"]
             payload["question"] = "继续解释"
-            payload["model"] = "gpt-5.6-sol"
+            payload["model"] = selected_model
             payload["effort"] = "xhigh"
             continued = request(f"{origin}/api/ask", "POST", payload, token)
-            assert continued["knowledge_settings"]["model"] == "gpt-5.6-sol"
+            assert continued["knowledge_settings"]["model"] == selected_model
             assert continued["knowledge_settings"]["effort"] == "xhigh"
 
             state = request(f"{origin}/api/state?document_id={urllib.parse.quote(document_id)}")
@@ -541,7 +719,7 @@ def run() -> None:
             assert state["active_thread_id"] == first["thread_id"]
             assert len(state["threads"]) == 1
             assert state["threads"][0]["message_count"] == 4
-            assert state["knowledge_settings"]["model"] == "gpt-5.6-sol"
+            assert state["knowledge_settings"]["model"] == selected_model
             assert state["knowledge_settings"]["effort"] == "xhigh"
 
             archived = request(
@@ -626,7 +804,7 @@ def run() -> None:
                     "contexts": payload["contexts"],
                     "instruction": "补充训练并行与自回归生成串行之间的边界",
                     "pdf_contexts": [],
-                    "model": "gpt-5.6-sol",
+                    "model": selected_model,
                     "effort": "xhigh",
                 },
                 token,
@@ -709,13 +887,13 @@ def run() -> None:
                 {
                     "source_id": "arxiv-1706.03762v7",
                     "page": 4,
-                    "model": "gpt-5.6-sol",
+                    "model": selected_model,
                     "reasoning_effort": "high",
                 },
                 token,
             )
             assert translated_next["page"] == 4
-            assert translated_next["translation_model"] == "gpt-5.6-sol"
+            assert translated_next["translation_model"] == selected_model
             assert translated_next["translation_reasoning_effort"] == "high"
             source_map_state = request(
                 f"{origin}/api/translation/source-map?source_id=arxiv-1706.03762v7"
@@ -798,6 +976,7 @@ def run() -> None:
             )
             assert saved["items"][0]["question"].startswith("为什么")
             assert [item["page"] for item in saved["items"][0]["evidence"]] == [3, 4]
+            assert saved["items"][0]["visual_html"] == first["messages"][1]["visual_html"]
             faq_id = saved["items"][0]["id"]
             edited = request(
                 f"{origin}/api/faq/edit",
@@ -874,6 +1053,8 @@ def run() -> None:
             assert "arxiv-1706.03762v7" in calls[0]["prompt"]
             assert "允许并应主动使用可用的联网、搜索、浏览器和 MCP 工具" in calls[0]["prompt"]
             assert "回答长度、技术深度和结构按问题难度" in calls[0]["prompt"]
+            assert "用户要求曲线、图片、动画或可交互理解时" in calls[0]["prompt"]
+            assert "交互 HTML 只能放在 visual_html 字段" in calls[0]["prompt"]
             assert "不要修改文件、联网或启动未知脚本" not in calls[0]["prompt"]
             assert "只能依据任务目录中的原始调研 Markdown" not in calls[0]["prompt"]
             assert "bdfaa68d8984f0dc02beaca527b76f207d99b666d31d1da728ee0728182df697" in calls[0]["prompt"]
@@ -884,15 +1065,20 @@ def run() -> None:
             assert all(image["png_signature"] == "89504e470d0a1a0a" for image in calls[0]["images"])
             assert all(image["size"] > 10_000 for image in calls[0]["images"])
             assert "--image" in calls[0]["args"]
+            assert "knowledge-answer.schema.json" in " ".join(calls[0]["args"])
             assert all(not Path(image["path"]).exists() for image in calls[0]["images"])
             assert any("resume" in call["args"] for call in calls[1:])
+            assert all(
+                "knowledge-answer.schema.json" in " ".join(call["args"])
+                for call in calls[:4]
+            )
             assert "--image" in calls[1]["args"]
             assert [call["args"][call["args"].index("-m") + 1] for call in calls] == [
                 "gpt-5.6-terra",
-                "gpt-5.6-sol",
-                "gpt-5.6-sol",
-                "gpt-5.6-sol",
-                "gpt-5.6-sol",
+                selected_model,
+                selected_model,
+                selected_model,
+                selected_model,
             ]
             expected_efforts = ["ultra", "xhigh", "xhigh", "xhigh", "xhigh"]
             assert all(
@@ -915,7 +1101,7 @@ def run() -> None:
             assert [call["model"] for call in responses_calls] == [
                 "gpt-5.6-terra",
                 "gpt-5.6-terra",
-                "gpt-5.6-sol",
+                selected_model,
                 "gpt-5.6-terra",
             ]
             assert [call["reasoning"] for call in responses_calls] == [
@@ -966,4 +1152,5 @@ def run() -> None:
 
 if __name__ == "__main__":
     run()
+    run("gpt-6-astra")
     print("Knowledge API persistence checks passed")

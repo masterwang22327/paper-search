@@ -400,6 +400,7 @@ def send_site_entry(
     if handler.headers.get("If-None-Match") == etag and not handler.headers.get("Range"):
         handler.send_response(HTTPStatus.NOT_MODIFIED)
         handler.send_header("ETag", etag)
+        handler.send_header("Cache-Control", "no-cache")
         handler.end_headers()
         return True
     selected = None
@@ -427,6 +428,7 @@ def send_site_entry(
     if selected:
         handler.send_header("Content-Range", f"bytes {start}-{end}/{entry.size}")
     handler.send_header("ETag", etag)
+    handler.send_header("Cache-Control", "no-cache")
     handler.send_header("Last-Modified", formatdate(entry.mtime_ns / 1_000_000_000, usegmt=True))
     handler.send_header("X-Content-Type-Options", "nosniff")
     handler.end_headers()

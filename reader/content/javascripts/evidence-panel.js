@@ -166,10 +166,23 @@
 
   function setPanelOpen(open) {
     document.body.classList.toggle("evidence-panel-open", open);
+    panel?.setAttribute("aria-hidden", String(!open));
+    toggle?.setAttribute("aria-expanded", String(open));
     window.dispatchEvent(new CustomEvent("reader:evidence-panel-change", {
       detail: { open }
     }));
   }
+
+  document.addEventListener("keydown", event => {
+    if (
+      event.key === "Escape"
+      && document.body.classList.contains("evidence-panel-open")
+      && !document.querySelector(".reader-revision-editor, .knowledge-faq-editor")
+    ) {
+      closePanel();
+      toggle?.focus();
+    }
+  });
 
   function showEvidence(link, openPanel) {
     buildPanel();
@@ -182,6 +195,7 @@
     const cleanPdf = new URL(link.dataset.pdf, document.baseURI);
     cleanPdf.hash = "page=" + page;
     const viewerUrl = new URL("../../pdf-viewer/", link.href);
+    viewerUrl.searchParams.set("v", "20260908-aligned-3");
     viewerUrl.searchParams.set("file", cleanPdf.pathname);
     viewerUrl.searchParams.set("page", page);
     viewerUrl.searchParams.set("source_id", link.dataset.sourceId || "");
@@ -193,7 +207,9 @@
     title.textContent = link.dataset.sourceTitle || "固定论文 PDF";
     meta.textContent = (link.dataset.sourceId || "固定来源") + " · PDF 第 " + page + " 页" +
       (link.dataset.locator ? " · " + link.dataset.locator : "");
-    externalLink.href = cleanPdf.href;
+    // External arXiv links are rendered through the local evidence viewer
+    // when a fixed PDF is available. Keep their original landing page here.
+    externalLink.href = link.dataset.externalUrl || cleanPdf.href;
     document.body.classList.add("evidence-panel-available");
     window.__readerPdfContext = { sourceId: link.dataset.sourceId, page: Number(page) };
     window.dispatchEvent(new CustomEvent("reader:pdf-context", {
