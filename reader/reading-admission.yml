@@ -3,7 +3,7 @@
 # not receive a canonical reading-card/route position until a human admission
 # decision is recorded.
 version: 1
-canonical_count: 73
+canonical_count: 83
 archived:
   - arxiv-2412.19437.md
   # Merged into embedding-models-lineage-selection.md; historical URLs remain readable.

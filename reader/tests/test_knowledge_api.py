@@ -27,9 +27,9 @@ import server as reader_server
 
 
 def check_translation_api_key_policy() -> None:
-    assert reader_server.DEFAULT_TRANSLATION_MODEL == "gpt-5.6-terra"
+    assert reader_server.DEFAULT_TRANSLATION_MODEL == "gpt-6.1-sol"
     assert reader_server.DEFAULT_TRANSLATION_REASONING_EFFORT == "medium"
-    assert reader_server.DEFAULT_RETRANSLATION_MODEL == "gpt-5.6-sol"
+    assert reader_server.DEFAULT_RETRANSLATION_MODEL == "gpt-6.1-sol"
     assert reader_server.DEFAULT_RETRANSLATION_REASONING_EFFORT == "high"
 
     with mock.patch.dict(
@@ -363,8 +363,8 @@ def check_retranslation_compact_fallback() -> None:
         )
         state = reader_server.ReaderState.__new__(reader_server.ReaderState)
         state.mark_manual_translation_success = lambda source_id: None
-        state.translation_model = "gpt-5.6-terra"
-        state.retranslation_model = "gpt-5.6-sol"
+        state.translation_model = "gpt-6.1-sol"
+        state.retranslation_model = "gpt-6.1-sol"
         state.retranslation_reasoning_effort = "high"
         state.validate_pdf = lambda payload: {"source_id": "paper", "page": 2}
         state.source_metadata = lambda source_id: {
@@ -403,7 +403,7 @@ def check_retranslation_compact_fallback() -> None:
             "source_id": "paper",
             "page": 2,
             "force": True,
-            "model": "gpt-5.6-sol",
+            "model": "gpt-6.1-sol",
             "reasoning_effort": "xhigh",
         })
 
@@ -424,7 +424,7 @@ def check_retranslation_compact_fallback() -> None:
         assert "NEXT PAGE CONTEXT" not in compact_prompt
         assert "unused-context-term" not in compact_prompt
         assert len(compact_prompt.encode("utf-8")) < len(full_prompt.encode("utf-8"))
-        assert all(call["model"] == "gpt-5.6-sol" for call in calls)
+        assert all(call["model"] == "gpt-6.1-sol" for call in calls)
         assert all(call["reasoning_effort"] == "xhigh" for call in calls)
         assert all(call["include_image"] is True for call in calls)
         assert result["translation_fallback"] == reader_server.RETRANSLATION_FALLBACK_MODE
@@ -578,7 +578,7 @@ def wait(url: str) -> None:
     raise RuntimeError("server did not start")
 
 
-def run(selected_model: str = "gpt-5.6-sol") -> None:
+def run(selected_model: str = "gpt-6.1-sol") -> None:
     check_translation_api_key_policy()
     check_codex_error_messages()
     check_visualization_fence_compatibility()
@@ -619,7 +619,7 @@ def run(selected_model: str = "gpt-5.6-sol") -> None:
                 "READER_SITE_DATABASE": str(site_database),
                 "READER_TRANSLATION_API_URL": f"http://127.0.0.1:{responses_port}/v1/responses",
                 "READER_TRANSLATION_API_KEY": "test-translation-key",
-                "READER_TRANSLATION_MODEL": "gpt-5.6-terra",
+                "READER_TRANSLATION_MODEL": "gpt-6.1-sol",
             }
         )
         responses_server = subprocess.Popen(
@@ -642,31 +642,33 @@ def run(selected_model: str = "gpt-5.6-sol") -> None:
             bootstrap = request(f"{origin}/api/bootstrap")
             token = bootstrap["token"]
             for endpoint in ("/api/chat/settings", "/api/revision/settings"):
-                for effort in ("low", "medium", "high", "xhigh", "max"):
-                    saved = request(f"{origin}{endpoint}", "POST", {
-                        "document_id": document_id, "model": "gpt-6-astra", "effort": effort,
-                    }, token)
-                    assert saved["model"] == "gpt-6-astra"
-                    assert saved["effort"] == effort
-                try:
-                    request(f"{origin}{endpoint}", "POST", {
-                        "document_id": document_id, "model": "gpt-6-astra", "effort": "ultra",
-                    }, token)
-                    raise AssertionError("unsupported Astra effort accepted")
-                except urllib.error.HTTPError as error:
-                    assert error.code == 400
+                for model in sorted(reader_server.REVISION_MODELS):
+                    for effort in sorted(reader_server.model_reasoning_efforts(model)):
+                        saved = request(f"{origin}{endpoint}", "POST", {
+                            "document_id": document_id, "model": model, "effort": effort,
+                        }, token)
+                        assert saved["model"] == model
+                        assert saved["effort"] == effort
+                    if model.startswith("gpt-6"):
+                        try:
+                            request(f"{origin}{endpoint}", "POST", {
+                                "document_id": document_id, "model": model, "effort": "ultra",
+                            }, token)
+                            raise AssertionError("unsupported GPT-6 effort accepted")
+                        except urllib.error.HTTPError as error:
+                            assert error.code == 400
             knowledge_settings = request(
                 f"{origin}/api/chat/settings",
                 "POST",
                 {
                     "document_id": document_id,
-                    "model": "gpt-5.6-terra",
-                    "effort": "ultra",
+                    "model": "gpt-6.1-sol",
+                    "effort": "max",
                 },
                 token,
             )
-            assert knowledge_settings["model"] == "gpt-5.6-terra"
-            assert knowledge_settings["effort"] == "ultra"
+            assert knowledge_settings["model"] == "gpt-6.1-sol"
+            assert knowledge_settings["effort"] == "max"
             try:
                 request(
                     f"{origin}/api/chat/settings",
@@ -684,6 +686,7 @@ def run(selected_model: str = "gpt-5.6-sol") -> None:
             payload = {
                 "document_id": document_id,
                 "document_sha256": document["sha256"],
+                "exploration_source": "arxiv-1706.03762v7",
                 "question": "解释这个设计转折",
                 "contexts": [
                     {
@@ -701,8 +704,8 @@ def run(selected_model: str = "gpt-5.6-sol") -> None:
             first = request(f"{origin}/api/ask", "POST", payload, token)
             assert first["session_id"] == "11111111-2222-4333-8444-555555555555"
             assert first["thread_id"] == first["active_thread_id"]
-            assert first["knowledge_settings"]["model"] == "gpt-5.6-terra"
-            assert first["knowledge_settings"]["effort"] == "ultra"
+            assert first["knowledge_settings"]["model"] == "gpt-6.1-sol"
+            assert first["knowledge_settings"]["effort"] == "max"
             assert first["messages"][0]["contexts"][0]["text"] == selected
             assert [item["page"] for item in first["messages"][0]["pdf_contexts"]] == [3, 4]
             assert "<button" in first["messages"][1]["visual_html"]
@@ -755,6 +758,14 @@ def run(selected_model: str = "gpt-5.6-sol") -> None:
             }
             third = request(f"{origin}/api/ask", "POST", new_payload, token)
             assert third["thread_id"] == created["active_thread_id"]
+
+            # New threads must not silently archive other open conversations.
+            extra_thread = request(f"{origin}/api/chat/new", "POST", {"document_id": document_id}, token)
+            previous = next(item for item in extra_thread["threads"] if item["id"] == third["thread_id"])
+            assert previous["status"] == "open"
+            resumed = request(f"{origin}/api/ask", "POST", {**new_payload, "question": "继续之前的对话"}, token)
+            assert resumed["thread_id"] == third["thread_id"]
+            assert resumed["session_id"] == third["session_id"]
 
             # A slow question must serialize only its own Codex thread. PDF
             # translation status and page cache reads stay responsive.
@@ -858,13 +869,13 @@ def run(selected_model: str = "gpt-5.6-sol") -> None:
                     "source_id": "arxiv-1706.03762v7",
                     "page": 3,
                     "force": True,
-                    "model": "gpt-5.6-terra",
-                    "reasoning_effort": "ultra",
+                    "model": "gpt-6.1-sol",
+                    "reasoning_effort": "max",
                 },
                 token,
             )
-            assert retranslated["translation_model"] == "gpt-5.6-terra"
-            assert retranslated["translation_reasoning_effort"] == "ultra"
+            assert retranslated["translation_model"] == "gpt-6.1-sol"
+            assert retranslated["translation_reasoning_effort"] == "max"
             try:
                 request(
                     f"{origin}/api/translation/page",
@@ -949,7 +960,7 @@ def run(selected_model: str = "gpt-5.6-sol") -> None:
             )
             assert "session_id" not in translation_manifest
             assert translation_manifest["translation_backend"] == "responses-api"
-            assert translation_manifest["translation_model"] == "gpt-5.6-terra"
+            assert translation_manifest["translation_model"] == "gpt-6.1-sol"
             assert translation_manifest["source_map_path"] == "source-map.json"
             source_map = translation_store.load_json(
                 "arxiv-1706.03762v7/source-map.json", {}
@@ -1074,13 +1085,14 @@ def run(selected_model: str = "gpt-5.6-sol") -> None:
             )
             assert "--image" in calls[1]["args"]
             assert [call["args"][call["args"].index("-m") + 1] for call in calls] == [
-                "gpt-5.6-terra",
+                "gpt-6.1-sol",
+                selected_model,
                 selected_model,
                 selected_model,
                 selected_model,
                 selected_model,
             ]
-            expected_efforts = ["ultra", "xhigh", "xhigh", "xhigh", "xhigh"]
+            expected_efforts = ["max", "xhigh", "xhigh", "xhigh", "xhigh", "xhigh"]
             assert all(
                 f'model_reasoning_effort="{effort}"' in call["args"]
                 for call, effort in zip(calls, expected_efforts, strict=True)
@@ -1091,6 +1103,8 @@ def run(selected_model: str = "gpt-5.6-sol") -> None:
             ]
             assert len(revision_calls) == 1
             assert "--ephemeral" in revision_calls[0]["args"]
+            assert 'web_search="live"' in revision_calls[0]["args"]
+            assert 'sandbox_mode="read-only"' in revision_calls[0]["args"]
             assert "resume" not in revision_calls[0]["args"]
             assert "候选正文修订器" in revision_calls[0]["prompt"]
             assert "补充训练并行与自回归生成串行之间的边界" in revision_calls[0]["prompt"]
@@ -1099,14 +1113,14 @@ def run(selected_model: str = "gpt-5.6-sol") -> None:
             assert len(responses_calls) == 4
             assert all(call["authorized"] for call in responses_calls)
             assert [call["model"] for call in responses_calls] == [
-                "gpt-5.6-terra",
-                "gpt-5.6-terra",
+                "gpt-6.1-sol",
+                "gpt-6.1-sol",
                 selected_model,
-                "gpt-5.6-terra",
+                "gpt-6.1-sol",
             ]
             assert [call["reasoning"] for call in responses_calls] == [
                 {"effort": reader_server.DEFAULT_TRANSLATION_REASONING_EFFORT},
-                {"effort": "ultra"},
+                {"effort": "max"},
                 {"effort": "high"},
                 {"effort": reader_server.DEFAULT_TRANSLATION_REASONING_EFFORT},
             ]

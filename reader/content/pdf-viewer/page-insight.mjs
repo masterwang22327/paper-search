@@ -7,6 +7,8 @@ function element(tag, className, text) {
 
 export function createPageInsight({ sourceId, api, onLayoutChange, onOpen, onLocate, onClearRegions }) {
   let regionVersion = 0;
+  let savedScroll = 0;
+  let renderedKey = "";
   const panel = document.querySelector("#insight-panel");
   const resizer = document.querySelector("#insight-resizer");
   const workspace = document.querySelector("#workspace");
@@ -91,18 +93,18 @@ export function createPageInsight({ sourceId, api, onLayoutChange, onOpen, onLoc
   for (const option of document.querySelector("#retranslation-model").options) model.append(option.cloneNode(true));
   for (const option of document.querySelector("#retranslation-effort").options) effort.append(option.cloneNode(true));
   try {
-    model.value = localStorage.getItem("research-reader-insight-model") || "gpt-5.6-terra";
+    model.value = localStorage.getItem("research-reader-insight-model") || "gpt-6.1-sol";
     effort.value = localStorage.getItem("research-reader-insight-effort") || "medium";
   } catch { /* Storage may be unavailable in embedded or private browsing. */ }
-  if (!model.value) model.value = "gpt-5.6-terra";
+  if (!model.value) model.value = "gpt-6.1-sol";
 
   function syncSettings() {
-    const astra = model.value === "gpt-6-astra";
+    const gpt6 = model.value.startsWith("gpt-6");
     for (const option of effort.options) {
-      option.disabled = astra ? option.value === "ultra" : option.value === "low";
+      option.disabled = gpt6 && option.value === "ultra";
       option.hidden = option.disabled;
     }
-    if (!effort.value || effort.selectedOptions[0].disabled) effort.value = "medium";
+    if (!effort.value || effort.selectedOptions[0].disabled) effort.value = gpt6 && effort.value === "ultra" ? "max" : "medium";
     try {
       localStorage.setItem("research-reader-insight-model", model.value);
       localStorage.setItem("research-reader-insight-effort", effort.value);
@@ -114,7 +116,7 @@ export function createPageInsight({ sourceId, api, onLayoutChange, onOpen, onLoc
     return { source_id: sourceId, page, model: model.value, reasoning_effort: effort.value };
   }
   function keyFor(value = request()) {
-    return JSON.stringify(value);
+    return JSON.stringify({ ...value, readingDate: new Date().toDateString() });
   }
   function updateControls() {
     toggle.disabled = !ready;
@@ -132,6 +134,8 @@ export function createPageInsight({ sourceId, api, onLayoutChange, onOpen, onLoc
     return group;
   }
   function render(saved) {
+    const top = renderedKey === keyFor() ? (panel.hidden ? savedScroll : content.scrollTop) : 0;
+    renderedKey = keyFor();
     const version = ++regionVersion;
     onClearRegions();
     title.textContent = `PDF 第 ${page} 页 · 知识解析`;
@@ -172,18 +176,26 @@ export function createPageInsight({ sourceId, api, onLayoutChange, onOpen, onLoc
             if (saved.page === page && anchor.isConnected) setStatus("原文定位失败，可重试", true);
           } finally { anchor.disabled = false; }
         });
+        if (analysis.claim_type) body.append(element("span", "insight-claim-type", analysis.claim_type));
+        if (analysis.motivation) {
+          body.append(element("h4", "insight-step-label", "为什么这样做"));
+          body.append(element("p", "insight-motivation", analysis.motivation));
+        }
         body.append(element("p", "insight-original-meaning", analysis.original_meaning));
         body.append(anchor);
-        for (const paragraph of analysis.paragraphs) body.append(element("p", "", paragraph));
         if (analysis.boundary) {
-          body.append(element("h4", "insight-step-label", "需要辨清"));
+          body.append(element("h4", "insight-step-label", "能说明到哪一步"));
           body.append(element("p", "", analysis.boundary));
         }
+        const explanation = element("details", "insight-explanation");
+        explanation.append(element("summary", "", "展开解释与推导"));
+        for (const paragraph of analysis.paragraphs) explanation.append(element("p", "", paragraph));
         const references = element("details", "insight-references");
         references.append(element("summary", "", "原文与出处"));
         references.append(element("q", "insight-source-quote", analysis.source_quote));
         references.append(element("small", "insight-evidence", analysis.evidence.join(" · ")));
-        body.append(references);
+        explanation.append(references);
+        body.append(explanation);
         article = section(`${index + 1}. ${analysis.title}`, body, `insight-analysis is-${analysis.kind}`);
         details.append(article);
         // Draw all current-page anchors without moving either reading surface.
@@ -203,13 +215,39 @@ export function createPageInsight({ sourceId, api, onLayoutChange, onOpen, onLoc
         for (const caveat of value.caveats) list.append(element("li", "", caveat));
         details.append(section("证据边界", list, "insight-caveats"));
       }
+      if (value.modern_view?.summary) {
+        const modern = element("div", "insight-prose");
+        const freshness = saved.freshness?.status;
+        const label = freshness === "verified" ? "已联网查阅来源"
+          : freshness === "unavailable" ? "联网暂不可用 · 后续研究未核验"
+          : "知识背景补充 · 未核验最新进展";
+        modern.append(element("small", "insight-freshness", `${saved.reading_date || saved.created_at?.slice(0, 10) || ""} · ${label}`));
+        modern.append(element("p", "", value.modern_view.summary));
+        const sources = element("ol", "insight-modern-sources");
+        for (const source of value.modern_view.sources || []) {
+          let url;
+          try { url = new URL(source.url); } catch { continue; }
+          if (!["https:", "http:"].includes(url.protocol)) continue;
+          const item = element("li", "");
+          const link = element("a", "", source.title);
+          link.href = url.href;
+          link.target = "_blank";
+          link.rel = "noopener noreferrer";
+          item.append(link);
+          if (source.published && source.published !== "未知") item.append(element("small", "", ` · ${source.published}`));
+          sources.append(item);
+        }
+        if (sources.childElementCount) modern.append(sources);
+        details.append(section("放到今天怎么看", modern, "insight-modern"));
+      }
       content.append(details);
-      setStatus(`已保存 · ${saved.model} / ${saved.reasoning_effort}`);
+      setStatus(`已保存${saved.reading_date ? ` · ${saved.reading_date}` : ""} · ${saved.model} / ${saved.reasoning_effort}`);
     } else {
       setStatus("尚未生成");
     }
     if (pending.has(keyFor())) setStatus(saved ? "正在重新解析 · 保留上次结果" : "正在解析本页知识…");
     updateControls();
+    content.scrollTop = top;
   }
   async function loadCached() {
     readController?.abort();
@@ -265,6 +303,8 @@ export function createPageInsight({ sourceId, api, onLayoutChange, onOpen, onLoc
     }
   }
   function setOpen(open) {
+    if (open === !panel.hidden) return;
+    if (!open) savedScroll = content.scrollTop;
     if (open) onOpen();
     panel.hidden = !open;
     resizer.hidden = !open;
@@ -273,7 +313,7 @@ export function createPageInsight({ sourceId, api, onLayoutChange, onOpen, onLoc
     toggle.setAttribute("aria-expanded", String(open));
     toggle.classList.toggle("is-active", open);
     toggle.title = open ? "收起知识解析" : "打开知识解析";
-    if (open) loadCached();
+    if (open) { loadCached(); content.scrollTop = savedScroll; }
     else {
       ++regionVersion;
       onClearRegions();
@@ -290,12 +330,14 @@ export function createPageInsight({ sourceId, api, onLayoutChange, onOpen, onLoc
     loadCached();
   });
   return {
+    open() { setOpen(true); },
     close() { if (!panel.hidden) setOpen(false); },
     setReady(value) { ready = value; updateControls(); },
     setPage(value) {
       if (page === value) return;
       page = value;
       content.scrollTop = 0;
+      savedScroll = 0;
       loadCached();
     }
   };

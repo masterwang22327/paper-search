@@ -1,0 +1,1170 @@
+#!/usr/bin/env python3
+"""Build a disposable MkDocs document tree from one read-only research task."""
+
+from __future__ import annotations
+
+import argparse
+import html
+import os
+import re
+import shutil
+import sys
+from functools import lru_cache
+from pathlib import Path, PurePosixPath
+
+import yaml
+
+
+READER_DIR = Path(__file__).resolve().parents[1]
+REPO_DIR = READER_DIR.parent
+sys.path.insert(0, str(READER_DIR))
+
+from task_store import ArtifactInfo, TaskArtifactStore
+
+
+DEFAULT_TASK_ID = "paper-research-base-knowledge-about-llm-20260717"
+READING_CARDS_PATH = READER_DIR / "reading-cards.yml"
+LEARNING_PATH_PATH = READER_DIR / "learning-path.yml"
+READING_ADMISSION_PATH = READER_DIR / "reading-admission.yml"
+READING_CARD_FIELDS = (
+    "level",
+    "effort",
+    "background",
+    "problem",
+    "legacy",
+    "team",
+    "impact",
+    "value",
+    "strategy",
+    "prerequisites",
+)
+
+NAV_TITLE_OVERRIDES = {
+    # Keep the annotated source page byte-for-byte stable while making its
+    # navigation label consistent with the reader-facing titles.
+    "arxiv-1706.03762.md": "Attention Is All You Need：用自注意力替代序列递归",
+}
+
+BACKTICK_PATH = re.compile(
+    r"(?<!\[)`((?:papers|sources)/[^`\n]+)`((?::\d+(?:--?\d+)?))?"
+)
+MARKDOWN_PATH = re.compile(
+    r"(?<=\]\()((?:(?:\.\./)+)?(?:papers|sources)/[^)\s]+)"
+)
+LOCAL_PDF_MARKDOWN = re.compile(
+    r"\[([^\]\n]+)\]\(((?:(?:\.\./)+)?sources/[^)\s]+\.pdf)\)"
+)
+EXTERNAL_ARXIV_MARKDOWN = re.compile(
+    r"\[([^\]\n]+)\]\((https?://arxiv\.org/(?:abs|pdf)/"
+    r"(\d{4}\.\d{4,5})(?:v(\d+))?(?:\.pdf)?(?:#[^)]*)?)\)"
+)
+STATE_MATRIX_PATH = re.compile(r"(?<=\]\()(state/coverage-matrix-[^)\s]+)")
+ADMISSION_PATH = re.compile(r"(?<=\]\()((?:(?:\.\./)+)?reader/reading-admission\.yml)")
+SOURCE_TABLE_ROW = re.compile(r"^\|\s*`([^`]+)`\s*\|")
+EXTERNAL_URL = re.compile(r"https?://[^\s|`<>]+")
+SOURCE_LOCATION = re.compile(r"^(.*?)(?::(\d+)(?:--?(\d+))?)?$")
+ARXIV_SOURCE_ID = re.compile(r"^arxiv-(\d{4}\.\d{4,5})(v\d+)?$")
+ROUTE_NUMBER_PREFIX = re.compile(r"^(?:\d{1,3}\s*·\s*)+")
+TRANSFORMERS_ARTIFACT = re.compile(
+    r"^transformers-(?P<filename>(?P<kind>modeling|configuration)_(?P<model>[a-z0-9_]+))"
+    r"-at-(?P<revision>v[\w.-]+)\.py$"
+)
+VLLM_ARTIFACT = re.compile(
+    r"^vllm-.+-at-(?P<revision>v\d+(?:\.\d+)*)(?:\.(?:py|txt|sha256))?$"
+)
+CITATION = re.compile(r"\[([^\]\n]{0,220}\bpp?\.?\s*\d+[^\]\n]{0,180})\]", re.IGNORECASE)
+PAGE = re.compile(r"\bpp?\.?\s*(\d+)", re.IGNORECASE)
+CANONICAL_SOURCE = re.compile(r"^\s*PDF:([A-Za-z0-9._-]{1,128})(?=\s|$)", re.IGNORECASE)
+LOCATOR = re.compile(
+    r"(?:§{1,2}\s*[\w.\-]+|\b(?:sec(?:tion)?|app(?:endix)?|fig(?:ure)?|table|eq(?:uation)?|algorithm)\.?\s*[\w.()\-]+)",
+    re.IGNORECASE,
+)
+
+# Only explicit, stable aliases are accepted. Ambiguous multi-paper citations are left untouched.
+SOURCE_ALIASES = {
+    "T17": "arxiv-1706.03762v7",
+    "Transformer": "arxiv-1706.03762v7",
+    "PPO": "arxiv-1707.06347v2",
+    "BERT": "arxiv-1810.04805v2",
+    "T5": "arxiv-1910.10683v4",
+    "UL2": "arxiv-2205.05131v3",
+    "G3": "arxiv-2005.14165v4",
+    "GPT-3": "arxiv-2005.14165v4",
+    "L22": "arxiv-2106.09685v2",
+    "LoRA": "arxiv-2106.09685v2",
+    "PaLM": "arxiv-2204.02311v5",
+    "I22": "arxiv-2203.02155v1",
+    "InstructGPT": "arxiv-2203.02155v1",
+    "DPO": "neurips-2023-dpo",
+    "LLaMA": "arxiv-2302.13971v1",
+    "Mamba": "arxiv-2312.00752v2",
+    "G15": "arxiv-2403.05530v5",
+    "Gemini": "arxiv-2403.05530v5",
+    "V3": "arxiv-2412.19437v2",
+    "DPR": "emnlp-2020-dpr",
+    "RAG": "neurips-2020-rag",
+    "REALM": "icml-2020-realm",
+    "RETRO": "icml-2022-retro",
+    "QLoRA": "neurips-2023-qlora",
+    "Adapters": "icml-2019-adapters",
+    "Prefix": "acl-2021-prefix-tuning",
+    "Prompt": "emnlp-2021-prompt-tuning",
+    "ZeRO": "arxiv-1910.02054v3",
+    "Megatron": "arxiv-1909.08053v4",
+    "Switch": "arxiv-2101.03961v3",
+    "S22": "arxiv-2101.03961v3",
+    "M17": "arxiv-1701.06538v1",
+    "Mixtral": "arxiv-2401.04088v1",
+    "RMSNorm": "neurips-2019-rmsnorm",
+    "Mistral": "arxiv-2310.06825v1",
+    "Negative Sampling": "arxiv-1310.4546v1",
+    "Mikolov 2013": "arxiv-1301.3781v3",
+    "JMLR": "jmlr-2003-neural-lm",
+}
+
+PAPER_PRIMARY = {
+    "20260911-reward-shaping.md": "icml-1999-potential-shaping",
+    "20260911-credit-assignment.md": "arxiv-2505.10978v3",
+    "20260911-grpo-objectives.md": "arxiv-2503.14476v2",
+    "20260911-search-training.md": "arxiv-2406.03816v3",
+    "20260911-distillation.md": "arxiv-2306.13649v3",
+    "20260911-tool-evaluation.md": "arxiv-2406.12045v1",
+    "20260911-rl-systems.md": "arxiv-2409.19256v2",
+    "20260911-translation.md": "arxiv-2207.04672v3",
+    "20260911-retrieval-sql.md": "arxiv-2404.16130v2",
+    "20260911-f5tts.md": "arxiv-2410.06885v3",
+    "arxiv-1706.03762.md": "arxiv-1706.03762v7",
+    "arxiv-1707.06347.md": "arxiv-1707.06347v2",
+    "arxiv-1810.04805.md": "arxiv-1810.04805v2",
+    "arxiv-1910.10683.md": "arxiv-1910.10683v4",
+    "arxiv-2005.14165.md": "arxiv-2005.14165v4",
+    "arxiv-2106.09685.md": "arxiv-2106.09685v2",
+    "arxiv-2204.02311.md": "arxiv-2204.02311v5",
+    "arxiv-2302.13971.md": "arxiv-2302.13971v1",
+    "arxiv-2312.00752.md": "arxiv-2312.00752v2",
+    "arxiv-2403.05530.md": "arxiv-2403.05530v5",
+    "arxiv-2412.19437.md": "arxiv-2412.19437v2",
+    "arxiv-2608.09867.md": "arxiv-2608.09867v1",
+    "dpr-dense-retrieval.md": "emnlp-2020-dpr",
+    "neurips-2022-instructgpt.md": "arxiv-2203.02155v1",
+    "neurips-2023-dpo.md": "neurips-2023-dpo",
+    "process-supervision-test-time-search.md": "arxiv-2305.20050v1",
+}
+
+
+def load_citation_overrides() -> dict[tuple[str, str, int], tuple[str, int]]:
+    config_path = READER_DIR / "citation-overrides.yml"
+    if not config_path.is_file():
+        return {}
+    data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    result: dict[tuple[str, str, int], tuple[str, int]] = {}
+    for item in data.get("overrides", []):
+        paper = str(item["paper"])
+        citation = str(item["citation"])
+        occurrence = int(item.get("occurrence", 1))
+        source_id = str(item["source"])
+        page = int(item["page"])
+        key = (paper, citation, occurrence)
+        if key in result:
+            raise ValueError(f"Duplicate citation override: {key}")
+        result[key] = (source_id, page)
+    return result
+
+
+def title_of(path: Path) -> str:
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("# "):
+            return line[2:].strip()
+    return path.stem.replace("-", " ").title()
+
+
+def route_nav_title(index: int, title: str) -> str:
+    """Prefix a route number once, stripping any number already in the title."""
+    clean_title = ROUTE_NUMBER_PREFIX.sub("", title.strip())
+    return f"{index:02d} · {clean_title}"
+
+
+def abstract_bullet(text: str, label: str) -> str:
+    match = re.search(rf"^\s*-\s+\*\*{re.escape(label)}\*\*[：:]\s*(.+)$", text, re.MULTILINE)
+    return match.group(1).strip() if match else ""
+
+
+def fallback_reading_card(path: Path) -> dict[str, str]:
+    text = path.read_text(encoding="utf-8")
+    problem = abstract_bullet(text, "解决什么") or "该专题来自本地调研任务的最新更新，Reader 尚未完成独立导读摘要。"
+    legacy = abstract_bullet(text, "不要误解") or abstract_bullet(text, "遗留问题")
+    if not legacy:
+        legacy = "Reader 尚未完成这篇新增专题的遗留问题审计；阅读时请以正文的证据边界和反例为准。"
+    return {
+        "level": "候选页面 · 待编排",
+        "effort": "建议先投入 20–30 分钟浏览，再决定是否精读",
+        "background": "该专题由本地调研任务新近生成，尚未进入人工维护的 Reader canonical 学习路线。",
+        "problem": problem,
+        "legacy": legacy,
+        "team": "待补充：Reader 尚未为该新增专题核对作者、机构和工作分工。",
+        "impact": "待补充：Reader 尚未独立核对论文发表状态、引用影响和后续采用情况。",
+        "value": "先判断它是否补充了当前任务的知识缺口；正式编排前，不把它视为既有路线的必读前置。",
+        "strategy": "先读文首摘要、结论和证据边界；需要继续阅读时，再回到正文核对方法、实验和来源引用。",
+        "prerequisites": "待确认；优先参考正文中的问题定义与前置概念。",
+    }
+
+
+def load_reading_admission(
+    paper_files: list[Path], path: Path = READING_ADMISSION_PATH
+) -> tuple[set[str], dict[str, dict[str, str]]]:
+    """Load the explicit boundary between research inventory and Reader route."""
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    expected = {paper.name for paper in paper_files}
+    raw_candidates = data.get("candidates", [])
+    if not isinstance(raw_candidates, list):
+        raise ValueError("Reading admission candidates must be a list")
+    candidates: dict[str, dict[str, str]] = {}
+    for raw in raw_candidates:
+        if not isinstance(raw, dict):
+            raise ValueError("Reading admission candidate must be a mapping")
+        filename = str(raw.get("file", "")).strip()
+        reason = str(raw.get("reason", "")).strip()
+        next_action = str(raw.get("next_action", "")).strip()
+        if not filename or not reason or not next_action:
+            raise ValueError("Every admission candidate needs file, reason and next_action")
+        if filename in candidates:
+            raise ValueError(f"Duplicate reading admission candidate: {filename}")
+        candidates[filename] = {"reason": reason, "next_action": next_action}
+    unknown = sorted(set(candidates) - expected)
+    if unknown:
+        raise ValueError("Admission candidates are not task papers: " + ", ".join(unknown))
+    archived = data.get("archived", [])
+    if not isinstance(archived, list) or any(not isinstance(item, str) for item in archived):
+        raise ValueError("Reading admission archived must be a list of filenames")
+    if len(archived) != len(set(archived)) or set(archived) - expected or set(archived) & set(candidates):
+        raise ValueError("Archived papers must be unique existing papers outside candidates")
+    admitted = expected - set(candidates) - set(archived)
+    declared = data.get("canonical_count")
+    if declared is not None and int(declared) != len(admitted):
+        raise ValueError(
+            f"Reading admission canonical_count={declared} but resolved {len(admitted)} files"
+        )
+    return admitted, candidates
+
+
+def load_reading_cards(
+    paper_files: list[Path], path: Path = READING_CARDS_PATH
+) -> dict[str, dict[str, str]]:
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    cards = data.get("papers", {})
+    expected = {path.name for path in paper_files}
+    actual = set(cards)
+    missing = sorted(expected - actual)
+    extra = sorted(actual - expected)
+    result = {filename: cards[filename] for filename in sorted(expected & actual)}
+    for filename, card in result.items():
+        missing_fields = [field for field in READING_CARD_FIELDS if not str(card.get(field, "")).strip()]
+        if missing_fields:
+            raise ValueError(f"Reading card {filename} is missing: {', '.join(missing_fields)}")
+    paper_by_name = {paper.name: paper for paper in paper_files}
+    for filename in missing:
+        result[filename] = fallback_reading_card(paper_by_name[filename])
+    if missing:
+        print("NOTICE - Using provisional reading cards for new papers: " + ", ".join(missing))
+    if extra:
+        print("NOTICE - Ignoring reading cards whose task papers are absent: " + ", ".join(extra))
+    return result
+
+
+def load_learning_path(
+    paper_files: list[Path],
+    titles: dict[str, str],
+    path: Path = LEARNING_PATH_PATH,
+    admitted_files: set[str] | None = None,
+) -> tuple[list[dict], dict[str, dict]]:
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    raw_stages = data.get("stages")
+    if not isinstance(raw_stages, list) or not raw_stages:
+        raise ValueError("Learning path must define at least one stage")
+
+    expected = set(admitted_files) if admitted_files is not None else {paper.name for paper in paper_files}
+    stages = []
+    flattened = []
+    stale = []
+    for raw_stage_number, raw_stage in enumerate(raw_stages, start=1):
+        name = str(raw_stage.get("name", "")).strip() if isinstance(raw_stage, dict) else ""
+        purpose = str(raw_stage.get("purpose", "")).strip() if isinstance(raw_stage, dict) else ""
+        entry = str(raw_stage.get("entry", "")).strip() if isinstance(raw_stage, dict) else ""
+        outcome = str(raw_stage.get("outcome", "")).strip() if isinstance(raw_stage, dict) else ""
+        checkpoint = str(raw_stage.get("checkpoint", "")).strip() if isinstance(raw_stage, dict) else ""
+        route_type = str(raw_stage.get("route_type", "")).strip() if isinstance(raw_stage, dict) else ""
+        raw_papers = raw_stage.get("papers") if isinstance(raw_stage, dict) else None
+        if (
+            not name
+            or not purpose
+            or not entry
+            or not outcome
+            or not checkpoint
+            or not route_type
+            or not isinstance(raw_papers, list)
+            or not raw_papers
+        ):
+            raise ValueError(f"Learning-path stage {raw_stage_number} is incomplete")
+        papers = []
+        for raw_paper in raw_papers:
+            filename = str(raw_paper.get("file", "")).strip() if isinstance(raw_paper, dict) else ""
+            bridge = str(raw_paper.get("bridge", "")).strip() if isinstance(raw_paper, dict) else ""
+            if not filename or not bridge:
+                raise ValueError(f"Learning-path entry is invalid: {filename or 'missing filename'}")
+            if filename not in expected:
+                stale.append(filename)
+                continue
+            item = {
+                "file": filename,
+                "title": titles[filename],
+                "bridge": bridge,
+                "stage_name": name,
+                "stage_entry": entry,
+                "stage_outcome": outcome,
+                "stage_checkpoint": checkpoint,
+                "route_type": route_type,
+                "unsequenced": False,
+            }
+            papers.append(item)
+            flattened.append(item)
+        if papers:
+            stage_number = len(stages) + 1
+            for stage_index, item in enumerate(papers, start=1):
+                item.update(
+                    stage_number=stage_number,
+                    stage_index=stage_index,
+                    stage_total=len(papers),
+                )
+            stages.append(
+                {
+                    "name": name,
+                    "purpose": purpose,
+                    "entry": entry,
+                    "outcome": outcome,
+                    "checkpoint": checkpoint,
+                    "route_type": route_type,
+                    "papers": papers,
+                    "unsequenced": False,
+                }
+            )
+
+    ordered = [item["file"] for item in flattened]
+    actual = set(ordered)
+    duplicates = sorted({filename for filename in ordered if ordered.count(filename) > 1})
+    if duplicates:
+        raise ValueError(f"Learning-path entries are repeated: {', '.join(duplicates)}")
+
+    unplanned = sorted(expected - actual, key=lambda filename: titles[filename].casefold())
+    if unplanned:
+        stage_number = len(stages) + 1
+        papers = []
+        for stage_index, filename in enumerate(unplanned, start=1):
+            item = {
+                "file": filename,
+                "title": titles[filename],
+                "bridge": "这是任务中新出现的专题，尚未完成人工依赖编排；先独立浏览，不假定它与相邻新增文档存在前置关系。",
+                "stage_name": "新增内容待编排",
+                "stage_number": stage_number,
+                "stage_index": stage_index,
+                "stage_total": len(unplanned),
+                "stage_entry": "这些页面尚未完成人工前置依赖审校。",
+                "stage_outcome": "只做独立浏览，不据此推断与相邻页面的顺序关系。",
+                "stage_checkpoint": "该页面是否已经明确独立学习问题、证据边界和正式前置依赖？",
+                "route_type": "待编排",
+                "unsequenced": True,
+            }
+            papers.append(item)
+            flattened.append(item)
+        stages.append(
+            {
+                "name": "新增内容待编排",
+                "purpose": "这些专题来自任务目录的最新更新。Reader 先保证它们可发现、可阅读，再由人工确认前置依赖和正式位置。",
+                "entry": "这些页面尚未完成人工前置依赖审校。",
+                "outcome": "只做独立浏览，不据此推断与相邻页面的顺序关系。",
+                "checkpoint": "该页面是否已经明确独立学习问题、证据边界和正式前置依赖？",
+                "route_type": "待编排",
+                "papers": papers,
+                "unsequenced": True,
+            }
+        )
+        print("NOTICE - Appending new papers to the unplanned inbox: " + ", ".join(unplanned))
+    if stale:
+        print("NOTICE - Ignoring learning-path entries whose task papers are absent: " + ", ".join(sorted(set(stale))))
+
+    contexts = {}
+    for index, item in enumerate(flattened):
+        item["overall_index"] = index + 1
+        previous = flattened[index - 1] if index else None
+        following = flattened[index + 1] if index + 1 < len(flattened) else None
+        if item["unsequenced"] or (previous and previous["unsequenced"]):
+            previous = None
+        if item["unsequenced"] or (following and following["unsequenced"]):
+            following = None
+        contexts[item["file"]] = {
+            **item,
+            "overall_index": item["overall_index"],
+            "overall_total": len(flattened),
+            "previous": previous,
+            "next": following,
+        }
+    return stages, contexts
+
+
+def reading_card(card: dict[str, str], learning: dict | None = None) -> str:
+    escaped = {key: html.escape(str(value)) for key, value in card.items()}
+    facts = (
+        ("提出背景", "background"),
+        ("遗留问题", "legacy"),
+        ("团队信息", "team"),
+        ("论文影响力", "impact"),
+    )
+    fact_html = "".join(
+        '<article class="paper-reading-card__fact">'
+        f'<span class="paper-reading-card__label">{label}</span><p>{escaped[key]}</p></article>'
+        for label, key in facts
+    )
+    route_html = ""
+    if learning:
+        previous = learning.get("previous")
+        following = learning.get("next")
+        route_links = []
+        if previous:
+            route_links.append(
+                f'<a href="../{html.escape(Path(previous["file"]).stem, quote=True)}/" rel="prev">'
+                f'<small>上一篇</small><span>← {html.escape(previous["title"])}</span></a>'
+            )
+        if following:
+            route_links.append(
+                f'<a href="../{html.escape(Path(following["file"]).stem, quote=True)}/" rel="next">'
+                f'<small>下一篇</small><span>{html.escape(following["title"])} →</span></a>'
+            )
+        stage_entry = ""
+        if learning["stage_index"] == 1:
+            stage_entry = (
+                '<p class="paper-reading-card__stage-entry">'
+                '<span class="paper-reading-card__label">阶段入口</span>'
+                f'{html.escape(learning["stage_entry"])}</p>'
+            )
+        route_html = (
+            '<div class="paper-reading-card__route">'
+            '<div class="paper-reading-card__route-copy">'
+            f'<span class="paper-reading-card__route-position">{html.escape(learning["route_type"])} · '
+            f'阶段 {learning["stage_number"]} · '
+            f'本阶段 {learning["stage_index"]}/{learning["stage_total"]}'
+            f'<small>全路线 {learning["overall_index"]}/{learning["overall_total"]}</small></span>'
+            f'<strong>{html.escape(learning["stage_name"])}</strong>'
+            '<p><span class="paper-reading-card__label">从上一篇到本篇</span>'
+            f'{html.escape(learning["bridge"])}</p>{stage_entry}</div>'
+            f'<nav aria-label="相邻专题">{"".join(route_links)}</nav></div>'
+        )
+    return (
+        '<section class="paper-reading-card" aria-label="专题阅读决策卡">'
+        '<div class="paper-reading-card__topline">'
+        '<span class="paper-reading-card__eyebrow">导读</span>'
+        f'<span class="paper-reading-card__level">{escaped["level"]}</span>'
+        f'<span class="paper-reading-card__effort">{escaped["effort"]}</span>'
+        '</div>'
+        '<div class="paper-reading-card__overview">'
+        '<article><span class="paper-reading-card__label">这篇先回答</span>'
+        f'<p>{escaped["problem"]}</p></article>'
+        '<article><span class="paper-reading-card__label">按你的知识画像先补什么</span>'
+        f'<p>{escaped["prerequisites"]}</p></article></div>'
+        '<div class="paper-reading-card__first-pass">'
+        '<span class="paper-reading-card__label">第一遍只做</span>'
+        f'<p>{escaped["strategy"]}</p></div>'
+        f'{route_html}'
+        '<details class="paper-reading-card__details">'
+        '<summary><span class="paper-reading-card__details-icon" aria-hidden="true"></span>'
+        '<span>查看完整导读</span>'
+        '<small>背景 · 遗留问题 · 团队 · 影响力 · 阅读方法</small></summary>'
+        '<div class="paper-reading-card__details-body">'
+        f'<div class="paper-reading-card__facts">{fact_html}</div>'
+        '<div class="paper-reading-card__actions">'
+        '<article><span class="paper-reading-card__label">对你的价值</span>'
+        f'<p>{escaped["value"]}</p></article>'
+        '<article><span class="paper-reading-card__label">阅读方法与前置</span>'
+        f'<p>{escaped["strategy"]}</p>'
+        f'<p><strong>前置：</strong>{escaped["prerequisites"]}</p></article></div>'
+        '</div></details>'
+        '</section>'
+    )
+
+
+def inject_reading_card(text: str, card: dict[str, str], learning: dict | None = None) -> str:
+    first_line_end = text.find("\n")
+    if not text.startswith("# ") or first_line_end < 0:
+        raise ValueError("Paper review must start with a level-one heading")
+    return text[: first_line_end + 1] + "\n" + reading_card(card, learning) + "\n\n" + text[first_line_end + 1 :]
+
+
+def reading_route_footer(learning: dict | None) -> str:
+    if not learning:
+        return ""
+    previous = learning.get("previous")
+    following = learning.get("next")
+    links = []
+    if previous:
+        links.append(
+            '<a class="reading-route-footer__previous" '
+            f'href="../{html.escape(Path(previous["file"]).stem, quote=True)}/" rel="prev">'
+            f'<small>上一篇 · {html.escape(previous["stage_name"])}</small>'
+            f'<strong>← {html.escape(previous["title"])}</strong></a>'
+        )
+    if following:
+        links.append(
+            '<a class="reading-route-footer__next" '
+            f'href="../{html.escape(Path(following["file"]).stem, quote=True)}/" rel="next">'
+            f'<small>下一篇 · {html.escape(following["stage_name"])}</small>'
+            f'<strong>{html.escape(following["title"])} →</strong>'
+            f'<span>{html.escape(following["bridge"])}</span></a>'
+        )
+    else:
+        links.append(
+            '<a class="reading-route-footer__next" href="../../reading-guide/">'
+            '<small>路线终点</small><strong>返回完整阅读路线 →</strong></a>'
+        )
+    return (
+        '<section class="reading-route-footer" aria-label="阅读路线续接">'
+        '<header><span>阶段检查点</span>'
+        f'<strong>{html.escape(learning["stage_name"])}</strong>'
+        f'<p>{html.escape(learning["stage_checkpoint"])}</p></header>'
+        f'<nav>{"".join(links)}</nav></section>'
+    )
+
+
+def inject_candidate_notice(text: str, metadata: dict[str, str]) -> str:
+    """Mark a generated page as discoverable but outside the canonical route."""
+    first_line_end = text.find("\n")
+    if not text.startswith("# ") or first_line_end < 0:
+        raise ValueError("Paper review must start with a level-one heading")
+    notice = (
+        '\n!!! warning "候选页面 · 不计入推荐路线"\n'
+        f'    {metadata["reason"]}\n'
+        f'    **准入前动作**：{metadata["next_action"]}\n'
+    )
+    return text[: first_line_end + 1] + notice + text[first_line_end + 1 :]
+
+
+def relative_link(current: PurePosixPath, target: PurePosixPath) -> str:
+    return os.path.relpath(str(target), str(current.parent)).replace(os.sep, "/")
+
+
+@lru_cache(maxsize=None)
+def source_upstream_urls(task_dir: Path) -> dict[str, str]:
+    """Load the public primary URL registered for each stable source ID."""
+    catalog = task_dir / "SOURCES.md"
+    if not catalog.is_file():
+        return {}
+    urls: dict[str, str] = {}
+    for line in catalog.read_text(encoding="utf-8").splitlines():
+        source_match = SOURCE_TABLE_ROW.match(line)
+        url_match = EXTERNAL_URL.search(line)
+        if source_match and url_match:
+            urls[source_match.group(1)] = url_match.group(0).rstrip(".,;:)")
+    return urls
+
+
+def source_external_url(source_id: str, urls: dict[str, str]) -> str | None:
+    """Resolve a source directory to its externally published primary source."""
+    if source_id in urls:
+        return urls[source_id]
+    source_without_version = re.sub(r"v\d+$", "", source_id)
+    if source_without_version in urls:
+        return urls[source_without_version]
+    arxiv_match = ARXIV_SOURCE_ID.fullmatch(source_id)
+    if arxiv_match:
+        return f"https://arxiv.org/abs/{arxiv_match.group(1)}{arxiv_match.group(2) or ''}"
+    return None
+
+
+def source_reference_url(shown: str, task_dir: Path) -> str | None:
+    """Resolve a local source-artifact reference without exposing its local inventory page."""
+    locator_match = SOURCE_LOCATION.fullmatch(shown)
+    if not locator_match:
+        return None
+    raw_path, start, end = locator_match.groups()
+    path = PurePosixPath(raw_path)
+    try:
+        sources_index = path.parts.index("sources")
+    except ValueError:
+        return None
+    if len(path.parts) <= sources_index + 1:
+        return None
+
+    # Transformer snapshots retain the upstream tag and Python module name in
+    # their artifact name, so they can point directly to the public source file.
+    artifact_match = TRANSFORMERS_ARTIFACT.fullmatch(path.name)
+    if artifact_match:
+        filename = artifact_match.group("filename")
+        model = artifact_match.group("model")
+        revision = artifact_match.group("revision")
+        url = (
+            "https://github.com/huggingface/transformers/blob/"
+            f"{revision}/src/transformers/models/{model}/{filename}.py"
+        )
+        if start:
+            url += f"#L{start}" + (f"-L{end}" if end else "")
+        return url
+
+    # vLLM artifact names include a fixed upstream release, but not the
+    # canonical repository path for every generated filename. The release tree
+    # remains a public, version-pinned source and is preferable to local notes.
+    vllm_match = VLLM_ARTIFACT.fullmatch(path.name)
+    if vllm_match:
+        return f"https://github.com/vllm-project/vllm/tree/{vllm_match.group('revision')}"
+
+    return source_external_url(path.parts[sources_index + 1], source_upstream_urls(task_dir))
+
+
+def linkify(text: str, current: PurePosixPath, task_dir: Path) -> str:
+    def destination(shown: str) -> str | None:
+        location_match = SOURCE_LOCATION.fullmatch(shown)
+        raw_path = location_match.group(1) if location_match else shown
+        path = PurePosixPath(raw_path)
+        normalized_parts = tuple(part for part in path.parts if part != "..")
+        normalized = PurePosixPath(*normalized_parts)
+        source = task_dir / normalized
+        if normalized.parts[0] == "papers" and source.is_file() and normalized.suffix == ".md":
+            target = normalized
+        elif "sources" in normalized.parts:
+            # Keep links to canonical paper PDFs local. Other source artifacts
+            # still resolve to their registered upstream page.
+            if normalized.suffix.lower() == ".pdf" and source.is_file():
+                target = normalized
+            else:
+                return source_reference_url(shown, task_dir)
+        elif normalized.parts[0] == "state" and normalized.name.startswith("coverage-matrix-") and source.is_file() and normalized.suffix == ".md":
+            # State coverage matrices are task-local audit records.  Expose
+            # them under the generated metadata section so links from the
+            # report/status pages remain valid in the Reader copy.
+            target = PurePosixPath("meta") / normalized.name
+        elif normalized.as_posix().endswith("reader/reading-admission.yml") and READING_ADMISSION_PATH.is_file():
+            target = PurePosixPath("meta") / "reading-admission.md"
+        else:
+            return None
+        return relative_link(current, target)
+
+    def replace_backtick(match: re.Match[str]) -> str:
+        shown = match.group(1)
+        locator = match.group(2) or ""
+        target = destination(shown + locator)
+        return f"[`{shown}`]({target}){locator}" if target else match.group(0)
+
+    def replace_local_pdf_link(match: re.Match[str]) -> str:
+        label = match.group(1)
+        shown = match.group(2)
+        location_match = SOURCE_LOCATION.fullmatch(shown)
+        raw_path = location_match.group(1) if location_match else shown
+        normalized_parts = tuple(part for part in PurePosixPath(raw_path).parts if part != "..")
+        normalized = PurePosixPath(*normalized_parts)
+        source = task_dir / normalized
+        if (
+            "sources" not in normalized.parts
+            or normalized.suffix.lower() != ".pdf"
+            or not source.is_file()
+        ):
+            return match.group(0)
+        sources_index = normalized.parts.index("sources")
+        if len(normalized.parts) <= sources_index + 1:
+            return match.group(0)
+        source_id = normalized.parts[sources_index + 1]
+        pdf_target = PurePosixPath("sources") / PurePosixPath(*normalized.parts[sources_index + 1 :])
+        rendered_page = rendered_html_path(current)
+        pdf_href = relative_link(rendered_page, pdf_target)
+        # Explicit paper links use the same evidence-link contract as
+        # [PDF:<source-id> p.<page>] citations, so one click opens the
+        # embedded PDF viewer with translation controls instead of navigating
+        # to the browser's standalone PDF tab.
+        escaped_label = html.escape(label)
+        escaped_href = html.escape(pdf_href + "#page=1", quote=True)
+        escaped_pdf = html.escape(pdf_href, quote=True)
+        escaped_source_id = html.escape(source_id, quote=True)
+        return (
+            f'<a class="evidence-link" href="{escaped_href}" '
+            f'data-pdf="{escaped_pdf}" data-page="1" '
+            f'data-source-id="{escaped_source_id}" '
+            f'data-source-title="{escaped_label}">{escaped_label}</a>'
+        )
+
+    def replace_external_arxiv_link(match: re.Match[str]) -> str:
+        label, upstream_url, arxiv_id, version = match.groups()
+        source_id = local_arxiv_source_id(arxiv_id, version, task_dir)
+        if not source_id:
+            return match.group(0)
+        pdf_target = PurePosixPath("sources") / source_id / "paper.pdf"
+        rendered_page = rendered_html_path(current)
+        pdf_href = relative_link(rendered_page, pdf_target)
+        escaped_label = html.escape(label)
+        escaped_href = html.escape(pdf_href + "#page=1", quote=True)
+        escaped_pdf = html.escape(pdf_href, quote=True)
+        escaped_source_id = html.escape(source_id, quote=True)
+        escaped_upstream = html.escape(upstream_url, quote=True)
+        return (
+            f'<a class="evidence-link" href="{escaped_href}" '
+            f'data-pdf="{escaped_pdf}" data-page="1" '
+            f'data-source-id="{escaped_source_id}" '
+            f'data-source-title="{escaped_label}" '
+            f'data-open-translation="true" '
+            f'data-external-url="{escaped_upstream}">{escaped_label}</a>'
+        )
+
+    def replace_markdown(match: re.Match[str]) -> str:
+        shown = match.group(1)
+        return destination(shown) or shown
+
+    text = LOCAL_PDF_MARKDOWN.sub(replace_local_pdf_link, text)
+    text = EXTERNAL_ARXIV_MARKDOWN.sub(replace_external_arxiv_link, text)
+    text = BACKTICK_PATH.sub(replace_backtick, text)
+    text = MARKDOWN_PATH.sub(replace_markdown, text)
+    text = STATE_MATRIX_PATH.sub(replace_markdown, text)
+    return ADMISSION_PATH.sub(replace_markdown, text)
+
+
+def matching_aliases(citation: str) -> dict[str, str]:
+    matches: dict[str, str] = {}
+    for alias, source_id in SOURCE_ALIASES.items():
+        if re.search(rf"(?<![\w-]){re.escape(alias)}(?![\w-])", citation, re.IGNORECASE):
+            matches[alias] = source_id
+    return matches
+
+
+def rendered_html_path(current: PurePosixPath) -> PurePosixPath:
+    if current.name == "index.md":
+        return current.with_suffix(".html")
+    return current.parent / current.stem / "index.html"
+
+
+def local_arxiv_source_id(arxiv_id: str, version: str | None, task_dir: Path) -> str | None:
+    """Find a fixed local PDF matching an arXiv link.
+
+    Unversioned arXiv links are resolved to the highest version that has a
+    local PDF. This keeps the generated link tied to a byte-addressable source
+    while preserving the author's original landing-page URL.
+    """
+    sources_dir = task_dir / "sources"
+    if not sources_dir.is_dir():
+        return None
+    pattern = re.compile(rf"^arxiv-{re.escape(arxiv_id)}(?:v(\d+))?$")
+    candidates: list[tuple[int, str]] = []
+    for directory in sources_dir.iterdir():
+        if not directory.is_dir() or not (directory / "paper.pdf").is_file():
+            continue
+        match = pattern.fullmatch(directory.name)
+        if not match:
+            continue
+        candidate_version = match.group(1)
+        if version is not None and candidate_version != version:
+            continue
+        candidates.append((int(candidate_version or 0), directory.name))
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: (item[0], item[1]))[1]
+
+
+def link_citations(
+    text: str,
+    current: PurePosixPath,
+    task_dir: Path,
+    primary_source: str | None,
+    audit: dict[str, int],
+    overrides: dict[tuple[str, str, int], tuple[str, int]],
+) -> str:
+    occurrences: dict[str, int] = {}
+
+    def replace(match: re.Match[str]) -> str:
+        citation = match.group(1)
+        full_citation = match.group(0)
+        occurrences[full_citation] = occurrences.get(full_citation, 0) + 1
+        override = overrides.get((current.name, full_citation, occurrences[full_citation]))
+        audit["found"] += 1
+        if override:
+            source_id, page = override
+            source_label = source_id
+            audit["overridden"] += 1
+        else:
+            canonical = CANONICAL_SOURCE.search(citation)
+            if canonical:
+                source_id = canonical.group(1)
+                source_label = source_id
+            else:
+                aliases = matching_aliases(citation)
+                source_ids = set(aliases.values())
+                if len(source_ids) > 1:
+                    audit["ambiguous"] += 1
+                    return match.group(0)
+                if source_ids:
+                    source_id = next(iter(source_ids))
+                    source_label = next(alias for alias, value in aliases.items() if value == source_id)
+                elif primary_source:
+                    source_id = primary_source
+                    source_label = source_id
+                else:
+                    audit["unresolved"] += 1
+                    return match.group(0)
+            page_match = PAGE.search(citation)
+            if not page_match:
+                audit["unresolved"] += 1
+                return match.group(0)
+            page = int(page_match.group(1))
+
+        source_pdf = task_dir / "sources" / source_id / "paper.pdf"
+        if not source_pdf.is_file():
+            audit["unresolved"] += 1
+            return match.group(0)
+        pdf_target = PurePosixPath("sources") / source_id / "paper.pdf"
+        # Raw HTML links are not rewritten by MkDocs. Account for directory-style
+        # output (`papers/name/index.html`) instead of the source Markdown path.
+        rendered_page = rendered_html_path(current)
+        pdf_href = relative_link(rendered_page, pdf_target)
+        href = pdf_href + f"#page={page}"
+        escaped = html.escape(match.group(0))
+        source_title = source_label if source_label != source_id else source_id
+        locator_match = LOCATOR.search(citation)
+        locator = locator_match.group(0) if locator_match else ""
+        audit["linked"] += 1
+        locator_attr = f' data-locator="{html.escape(locator, quote=True)}"' if locator else ""
+        primary_attr = ' data-primary="true"' if source_id == primary_source else ""
+        return (
+            f'<a class="evidence-link" href="{html.escape(href, quote=True)}" '
+            f'data-pdf="{html.escape(pdf_href, quote=True)}" '
+            f'data-page="{page}" data-source-id="{html.escape(source_id, quote=True)}" '
+            f'data-source-title="{html.escape(source_title, quote=True)}"'
+            f'{locator_attr}{primary_attr}>{escaped}</a>'
+        )
+
+    return CITATION.sub(replace, text)
+
+
+def hardlink_or_copy(source: Path, destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.link(source, destination)
+    except OSError:
+        shutil.copy2(source, destination)
+
+
+def source_page(
+    source_dir: Path,
+    destination: Path,
+    *,
+    include_pdfs: bool = True,
+    artifact_store: TaskArtifactStore | None = None,
+) -> None:
+    physical_files = sorted(path for path in source_dir.rglob("*") if path.is_file())
+    pdfs = [path for path in physical_files if path.suffix.lower() == ".pdf"]
+    if artifact_store is not None:
+        inventory = artifact_store.source_inventory(source_dir.name)
+    else:
+        inventory = [
+            ArtifactInfo(
+                path.relative_to(source_dir).as_posix(),
+                path.stat().st_size,
+                path.stat().st_mtime_ns,
+            )
+            for path in physical_files
+        ]
+    lines = [f"# 来源：{source_dir.name}", "", f"原始目录：`{source_dir}`", ""]
+    if pdfs:
+        lines.extend(["## 原始论文", ""])
+        for pdf in pdfs:
+            target_name = pdf.name if pdf.parent == source_dir else "-".join(pdf.relative_to(source_dir).parts)
+            if include_pdfs:
+                hardlink_or_copy(pdf, destination.parent / target_name)
+            else:
+                # MkDocs strict mode validates linked files. The temporary
+                # marker is removed before SQLite maps this URL to tasks/.
+                (destination.parent / target_name).touch()
+            lines.append(f"- [{pdf.relative_to(source_dir)}]({target_name})")
+        lines.append("")
+    evidence = source_dir / "evidence.md"
+    evidence_text = (
+        artifact_store.read_path_text(evidence) if artifact_store is not None
+        else evidence.read_text(encoding="utf-8") if evidence.is_file()
+        else None
+    )
+    if evidence_text is not None:
+        lines.extend(["## 证据说明", "", evidence_text, ""])
+    lines.extend(["## 文件清单", "", '<div class="source-inventory">', ""])
+    for item in inventory:
+        lines.append(f"- `{html.escape(item.path)}` · {item.size:,} bytes")
+    storage_note = (
+        "除上方 PDF 外，清单中的文件按原逻辑路径保存在任务级 SQLite；本站不会执行或改写这些工件。"
+        if artifact_store is not None
+        else "除上方 PDF 外，清单中的文件保留在原始任务目录，本站不会执行或改写这些工件。"
+    )
+    lines.extend(["", "</div>", "", "!!! note", f"    {storage_note}", ""])
+    destination.write_text("\n".join(lines), encoding="utf-8")
+
+
+def learning_path_markdown(
+    stages: list[dict], candidate_items: list[dict[str, str]] | None = None
+) -> str:
+    lines = []
+    overall_index = 0
+    for stage_number, stage in enumerate(stages, start=1):
+        lines.extend([
+            f'<section class="learning-stage" id="learning-stage-{stage_number}">',
+            '<header class="learning-stage__header">',
+            f'<span>{html.escape(stage["route_type"])} · 阶段 {stage_number}</span><h3>{html.escape(stage["name"])}</h3>',
+            f'<p>{html.escape(stage["purpose"])}</p>',
+            '</header>',
+            '<div class="learning-stage__contract">',
+            f'<p><span>进入前</span>{html.escape(stage["entry"])}</p>',
+            f'<p><span>读完后</span>{html.escape(stage["outcome"])}</p>',
+            '</div>',
+            f'<ol class="learning-stage__papers" start="{overall_index + 1}">',
+        ])
+        for item in stage["papers"]:
+            overall_index += 1
+            target = f'/papers/{html.escape(Path(item["file"]).stem, quote=True)}/'
+            level = html.escape(str(item.get("level", "专题精读")))
+            effort = html.escape(str(item.get("effort", "")))
+            lines.extend([
+                '<li>',
+                '<div class="learning-stage__paper-heading">',
+                f'<a href="{target}">{html.escape(item["title"])}</a>',
+                f'<span>{level}{" · " + effort if effort else ""}</span>',
+                '</div>',
+                f'<p>{html.escape(item["bridge"])}</p>',
+                '</li>',
+            ])
+        lines.extend([
+            '</ol>',
+            '<div class="learning-stage__checkpoint">',
+            f'<span>阶段检查</span><p>{html.escape(stage["checkpoint"])}</p>',
+            '</div>',
+            '</section>',
+            '',
+        ])
+    if candidate_items:
+        lines.extend(
+            [
+                "### 候选页面（不计入推荐路线）",
+                "",
+                "这些页面仍可打开和回查证据，但没有 canonical 阅读卡或路线位置。",
+                "",
+                "| 页面 | 当前边界 | 准入前动作 |",
+                "|---|---|---|",
+            ]
+        )
+        for item in candidate_items:
+            target = f'papers/{Path(item["file"]).stem}.md'
+            lines.append(
+                f'| [{item["title"]}]({target}) | {item["reason"]} | {item["next_action"]} |'
+            )
+        lines.append("")
+    return "\n".join(lines).rstrip()
+
+
+def write_summary(
+    docs_dir: Path,
+    stages: list[dict],
+    candidate_items: list[dict[str, str]] | None = None,
+) -> None:
+    lines = [
+        "- [开始阅读](index.md)",
+        "- [阅读指南](reading-guide.md)",
+        "- [综合报告](report/index.md)",
+        "- 专题精读（推荐顺序）",
+    ]
+    for stage_number, stage in enumerate(stages, start=1):
+        lines.append(f'    - 阶段 {stage_number} · {stage["name"]}')
+        for item in stage["papers"]:
+            lines.append(
+                f'        - [{route_nav_title(item["overall_index"], item["title"])}]'
+                f'(papers/{item["file"]})'
+            )
+    if candidate_items:
+        lines.append("- 候选页面（不计入推荐路线）")
+        for item in candidate_items:
+            lines.append(f'    - [{item["title"]}](papers/{item["file"]})')
+    lines.extend(
+        [
+            "- 证据与来源",
+            "    - [来源总目录](sources/index.md)",
+            "    - [原始来源索引](sources/catalog.md)",
+            "- 任务信息",
+            "    - [当前状态](meta/status.md)",
+            "    - [运行历史](meta/run-history.md)",
+            "    - [PDF 引用审计](meta/citation-audit.md)",
+            f"    - [生成说明](meta/about.md)",
+        ]
+    )
+    (docs_dir / "SUMMARY.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def prepare(
+    task_id: str,
+    output_dir: Path | None = None,
+    *,
+    virtual_site: bool = False,
+) -> None:
+    task_dir = (REPO_DIR / "tasks" / task_id).resolve()
+    required = [task_dir / "REPORT.md", task_dir / "SOURCES.md", task_dir / "papers", task_dir / "sources"]
+    missing = [str(path) for path in required if not path.exists()]
+    if missing:
+        raise SystemExit("Missing task inputs:\n" + "\n".join(missing))
+    artifact_store = TaskArtifactStore.open_existing(task_dir)
+
+    docs_dir = (output_dir or READER_DIR / "docs").resolve()
+    if docs_dir.exists():
+        shutil.rmtree(docs_dir)
+    shutil.copytree(READER_DIR / "content", docs_dir)
+    for subdir in ("report", "papers", "sources", "meta"):
+        (docs_dir / subdir).mkdir(parents=True, exist_ok=True)
+
+    audit = {"found": 0, "linked": 0, "ambiguous": 0, "unresolved": 0, "overridden": 0}
+    citation_overrides = load_citation_overrides()
+    report_path = PurePosixPath("report/index.md")
+    report = linkify((task_dir / "REPORT.md").read_text(encoding="utf-8"), report_path, task_dir)
+    report = link_citations(report, report_path, task_dir, None, audit, citation_overrides)
+    (docs_dir / "report" / "index.md").write_text(report, encoding="utf-8")
+
+    paper_files = sorted((task_dir / "papers").glob("*.md"))
+    admitted_files, candidate_metadata = load_reading_admission(paper_files)
+    reading_cards = load_reading_cards(paper_files)
+    titles = {path.name: NAV_TITLE_OVERRIDES.get(path.name, title_of(path)) for path in paper_files}
+    candidate_items = [
+        {"file": filename, "title": titles[filename], **candidate_metadata[filename]}
+        for filename in sorted(candidate_metadata, key=lambda item: titles[item].casefold())
+    ]
+    learning_stages, learning_contexts = load_learning_path(
+        paper_files, titles, admitted_files=admitted_files
+    )
+    for stage in learning_stages:
+        for item in stage["papers"]:
+            item.update(
+                level=reading_cards[item["file"]]["level"],
+                effort=reading_cards[item["file"]]["effort"],
+            )
+            learning_contexts[item["file"]].update(
+                level=item["level"],
+                effort=item["effort"],
+            )
+    guide_path = docs_dir / "reading-guide.md"
+    guide = guide_path.read_text(encoding="utf-8")
+    marker = "<!-- GENERATED_LEARNING_PATH -->"
+    if marker not in guide:
+        raise ValueError("Reading guide is missing the learning-path marker")
+    guide_path.write_text(
+        guide.replace(marker, learning_path_markdown(learning_stages, candidate_items)),
+        encoding="utf-8",
+    )
+    for source in paper_files:
+        current = PurePosixPath("papers") / source.name
+        transformed = linkify(source.read_text(encoding="utf-8"), current, task_dir)
+        transformed = link_citations(
+            transformed,
+            current,
+            task_dir,
+            PAPER_PRIMARY.get(source.name),
+            audit,
+            citation_overrides,
+        )
+        transformed = inject_reading_card(
+            transformed, reading_cards[source.name], learning_contexts.get(source.name)
+        )
+        if source.name in candidate_metadata:
+            transformed = inject_candidate_notice(transformed, candidate_metadata[source.name])
+        route_footer = reading_route_footer(learning_contexts.get(source.name))
+        if route_footer:
+            transformed += "\n\n" + route_footer + "\n"
+        (docs_dir / current).write_text(transformed, encoding="utf-8")
+
+    catalog = linkify((task_dir / "SOURCES.md").read_text(encoding="utf-8"), PurePosixPath("sources/catalog.md"), task_dir)
+    (docs_dir / "sources" / "catalog.md").write_text(catalog, encoding="utf-8")
+
+    source_dirs = sorted(path for path in (task_dir / "sources").iterdir() if path.is_dir())
+    index_lines = [
+        "# 原始来源索引",
+        "",
+        f"共 {len(source_dirs)} 个稳定来源目录。链接统一指向可追溯的公开论文、仓库或官方页面。",
+        "",
+    ]
+    for directory in source_dirs:
+        destination = docs_dir / "sources" / directory.name / "index.md"
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        source_page(
+            directory,
+            destination,
+            include_pdfs=not virtual_site,
+            artifact_store=artifact_store,
+        )
+        upstream = source_external_url(directory.name, source_upstream_urls(task_dir))
+        if upstream:
+            index_lines.append(f"- [{directory.name}]({upstream})")
+        else:
+            index_lines.append(f"- `{directory.name}`（未登记公开上游地址）")
+    (docs_dir / "sources" / "index.md").write_text("\n".join(index_lines) + "\n", encoding="utf-8")
+
+    for source_name, target_name, title in (
+        ("STATUS.md", "status.md", "当前状态"),
+        ("RUN_HISTORY.md", "run-history.md", "运行历史"),
+    ):
+        body = (task_dir / source_name).read_text(encoding="utf-8")
+        body = linkify(body, PurePosixPath("meta") / target_name, task_dir)
+        (docs_dir / "meta" / target_name).write_text(f"# {title}\n\n{body}\n", encoding="utf-8")
+    for matrix in sorted((task_dir / "state").glob("coverage-matrix-*.md")):
+        body = linkify(matrix.read_text(encoding="utf-8"), PurePosixPath("meta") / matrix.name, task_dir)
+        (docs_dir / "meta" / matrix.name).write_text(body, encoding="utf-8")
+    admission_copy = docs_dir / "meta" / "reading-admission.md"
+    admission_copy.write_text(
+        "# Reader admission 配置\n\n"
+        "这是本次生成所用的只读准入配置快照。\n\n"
+        "```yaml\n"
+        + READING_ADMISSION_PATH.read_text(encoding="utf-8")
+        + "```\n",
+        encoding="utf-8",
+    )
+    (docs_dir / "meta" / "about.md").write_text(
+        "# 生成说明\n\n"
+        f"- 任务 ID：`{task_id}`\n"
+        f"- 只读输入：`{task_dir}`\n"
+        f"- 生成目录：`{docs_dir}`\n"
+        f"- 研究文档：{len(paper_files)} 篇\n"
+        f"- canonical 阅读路线：{len(admitted_files)} 篇\n"
+        f"- 候选页面（不计入路线）：{len(candidate_items)} 篇\n"
+        f"- 来源目录：{len(source_dirs)} 个\n\n"
+        "Reader 的 Markdown 与静态站点只在临时构建目录中存在，完成后写入 SQLite；"
+        "原始任务文件不会被修改。\n",
+        encoding="utf-8",
+    )
+    (docs_dir / "meta" / "citation-audit.md").write_text(
+        "# PDF 引用映射审计\n\n"
+        "生成器只链接来源唯一、页码明确且本地固定 PDF 存在的引用。歧义引用保持原文，不进行猜测。\n\n"
+        f"- 发现带页码引用：{audit['found']}\n"
+        f"- 已链接到右侧 PDF：{audit['linked']}\n"
+        f"- 多来源歧义：{audit['ambiguous']}\n"
+        f"- 来源或 PDF 未确定：{audit['unresolved']}\n\n"
+        f"- reader 人工覆盖：{audit['overridden']}\n\n"
+        "多页引用打开范围的第一页；链接目标是固定 PDF 的物理页码。快捷键点击仍可在新标签页打开。\n\n"
+        "## 旧文档中发现的主要问题\n\n"
+        "- 同一个方括号混入多个来源，例如 `[T17 p.3; BERT p.4]`，Reader 无法安全决定点击目标。\n"
+        "- 只写 `[p.6]` 或依赖专题文首的隐式主来源，引用离开该文档后便失去身份。\n"
+        "- 使用 `T17`、`K20`、`R20` 等临时代号；只有生成器预先登记的少量别名可以解析。\n"
+        "- 混用物理页、印刷页、章节页或 alternate-layout 页码，页面数字看似正确但实际版式不同。\n"
+        "- 把多个相距很远的页段压进一个引用；Reader 只能打开第一个页码，后续位置仍需手找。\n"
+        "- `§`、Figure、Table、Equation 等定位符过去只展示、不传给 PDF Viewer，因而只能跳页。\n\n"
+        "## 新产出规范\n\n"
+        "统一写作 `[PDF:<stable-id> p.<physical-page> <locator>]`；一个方括号只放一个 stable-id。"
+        "该格式不依赖别名表，并可把章节/图表定位符传给 PDF Viewer 做页内高亮。\n",
+        encoding="utf-8",
+    )
+    write_summary(docs_dir, learning_stages, candidate_items)
+    print(
+        f"Prepared {len(paper_files)} reviews and {len(source_dirs)} source pages from {task_dir}; "
+        f"linked {audit['linked']}/{audit['found']} paged citations"
+    )
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--task-id", default=DEFAULT_TASK_ID)
+    parser.add_argument("--output-dir", type=Path)
+    parser.add_argument("--virtual-site", action="store_true")
+    args = parser.parse_args()
+    prepare(args.task_id, args.output_dir, virtual_site=args.virtual_site)
+
+
+if __name__ == "__main__":
+    main()

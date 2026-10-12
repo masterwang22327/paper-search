@@ -123,6 +123,15 @@ SOURCE_ALIASES = {
 }
 
 PAPER_PRIMARY = {
+    "mimo-series-technical-lineage.md": "mimo-v26-resource-audit-20261008",
+    "offline-trajectories-sandbox-distillation.md": "arxiv-2609.04148v1",
+    "recursive-self-improvement.md": "arxiv-2505.22954v3",
+    # Same-team SAN foundation study, not a full Needle 3 technical report.
+    "needle3-causal-convolution.md": "arxiv-2607.18363v1",
+    "cross-model-latent-communication.md": "arxiv-2510.03215v2",
+    "dart-sd-vake-structured-post-training.md": "arxiv-2608.18524v1",
+    # Related training paper, not an official JEV technical report.
+    "jev-system-one-rlcd.md": "arxiv-2503.02623v5",
     "20260911-reward-shaping.md": "icml-1999-potential-shaping",
     "20260911-credit-assignment.md": "arxiv-2505.10978v3",
     "20260911-grpo-objectives.md": "arxiv-2503.14476v2",
@@ -520,8 +529,8 @@ def reading_route_footer(learning: dict | None) -> str:
         )
     else:
         links.append(
-            '<a class="reading-route-footer__next" href="../../reading-guide/">'
-            '<small>路线终点</small><strong>返回完整阅读路线 →</strong></a>'
+            '<a class="reading-route-footer__next" href="../../">'
+            '<small>路线终点</small><strong>返回阶段目录 →</strong></a>'
         )
     return (
         '<section class="reading-route-footer" aria-label="阅读路线续接">'
@@ -662,7 +671,10 @@ def linkify(text: str, current: PurePosixPath, task_dir: Path) -> str:
             "sources" not in normalized.parts
             or normalized.suffix.lower() != ".pdf"
             or not source.is_file()
+            or normalized.name != "paper.pdf"
         ):
+            # The Reader PDF APIs resolve source_id to paper.pdf. Keep other
+            # archived PDF filenames as ordinary links to the actual file.
             return match.group(0)
         sources_index = normalized.parts.index("sources")
         if len(normalized.parts) <= sources_index + 1:
@@ -671,7 +683,7 @@ def linkify(text: str, current: PurePosixPath, task_dir: Path) -> str:
         pdf_target = PurePosixPath("sources") / PurePosixPath(*normalized.parts[sources_index + 1 :])
         rendered_page = rendered_html_path(current)
         pdf_href = relative_link(rendered_page, pdf_target)
-        # Explicit paper links use the same evidence-link contract as
+        # Explicit canonical paper links use the same evidence-link contract as
         # [PDF:<source-id> p.<page>] citations, so one click opens the
         # embedded PDF viewer with translation controls instead of navigating
         # to the browser's standalone PDF tab.
@@ -704,6 +716,7 @@ def linkify(text: str, current: PurePosixPath, task_dir: Path) -> str:
             f'data-pdf="{escaped_pdf}" data-page="1" '
             f'data-source-id="{escaped_source_id}" '
             f'data-source-title="{escaped_label}" '
+            f'data-open-translation="true" '
             f'data-external-url="{escaped_upstream}">{escaped_label}</a>'
         )
 
@@ -955,40 +968,51 @@ def learning_path_markdown(
     return "\n".join(lines).rstrip()
 
 
+def stage_directory_markdown(stages: list[dict]) -> str:
+    """Compact entry points, derived from the same route as paper navigation."""
+    lines = ['<div class="stage-directory">']
+    for number, stage in enumerate(stages, 1):
+        first = stage["papers"][0]
+        first_url = f'papers/{Path(first["file"]).stem}/'
+        lines.extend([
+            f'<section class="stage-directory__card" id="stage-{number}">',
+            f'<small>阶段 {number} · {html.escape(stage["route_type"])} · {len(stage["papers"])} 篇</small>',
+            f'<h2><a href="{first_url}">{html.escape(stage["name"])}</a></h2>',
+            f'<details><summary>查看本阶段文档</summary><ul>',
+        ])
+        for item in stage["papers"]:
+            target = f'papers/{Path(item["file"]).stem}/'
+            lines.append(f'<li><a href="{target}">{html.escape(item["title"])}</a></li>')
+        lines.extend(['</ul></details>', '</section>'])
+    lines.append('</div>')
+    return "\n".join(lines)
+
+
 def write_summary(
     docs_dir: Path,
     stages: list[dict],
     candidate_items: list[dict[str, str]] | None = None,
 ) -> None:
     lines = [
-        "- [开始阅读](index.md)",
-        "- [阅读指南](reading-guide.md)",
+        "- [阶段目录](index.md)",
         "- [综合报告](report/index.md)",
-        "- 专题精读（推荐顺序）",
+        "- [按任务选读](reading-guide.md)",
     ]
     for stage_number, stage in enumerate(stages, start=1):
-        lines.append(f'    - 阶段 {stage_number} · {stage["name"]}')
+        lines.append(f'- 阶段 {stage_number} · {stage["name"]}')
         for item in stage["papers"]:
             lines.append(
-                f'        - [{route_nav_title(item["overall_index"], item["title"])}]'
+                f'    - [{route_nav_title(item["overall_index"], item["title"])}]'
                 f'(papers/{item["file"]})'
             )
     if candidate_items:
-        lines.append("- 候选页面（不计入推荐路线）")
+        lines.append("- 候选研究（结论待核验）")
         for item in candidate_items:
             lines.append(f'    - [{item["title"]}](papers/{item["file"]})')
-    lines.extend(
-        [
-            "- 证据与来源",
-            "    - [来源总目录](sources/index.md)",
-            "    - [原始来源索引](sources/catalog.md)",
-            "- 任务信息",
-            "    - [当前状态](meta/status.md)",
-            "    - [运行历史](meta/run-history.md)",
-            "    - [PDF 引用审计](meta/citation-audit.md)",
-            f"    - [生成说明](meta/about.md)",
-        ]
-    )
+    lines.extend([
+        "- [论文与来源](sources/index.md)",
+        "- [维护与说明](reference.md)",
+    ])
     (docs_dir / "SUMMARY.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -1040,6 +1064,12 @@ def prepare(
                 level=item["level"],
                 effort=item["effort"],
             )
+    index_path = docs_dir / "index.md"
+    index_path.write_text(
+        index_path.read_text(encoding="utf-8").replace(
+            "<!-- GENERATED_STAGE_DIRECTORY -->", stage_directory_markdown(learning_stages)
+        ), encoding="utf-8",
+    )
     guide_path = docs_dir / "reading-guide.md"
     guide = guide_path.read_text(encoding="utf-8")
     marker = "<!-- GENERATED_LEARNING_PATH -->"

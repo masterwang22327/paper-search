@@ -44,6 +44,7 @@ def site_input_fingerprint(task_id: str) -> str:
         if path.is_file():
             files.add(path)
     files.update(path for path in (READER_DIR / "content").rglob("*") if path.is_file())
+    files.update(path for path in (READER_DIR / "overrides").rglob("*") if path.is_file())
 
     digest = hashlib.sha256()
     sources_dir = task_dir / "sources"

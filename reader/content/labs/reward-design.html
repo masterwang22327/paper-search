@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>奖励设计：三个可调节的数值实验</title>
+<style>
+:root{color-scheme:light dark;--bg:#f4f6fb;--paper:#fff;--text:#15223d;--muted:#526179;--border:#dbe2ee;--blue:#3b66db;--orange:#bd631b;--green:#168267;--red:#bb3b53}
+@media(prefers-color-scheme:dark){:root{--bg:#111928;--paper:#1a2537;--text:#eef3fc;--muted:#b6c3d6;--border:#35445b;--blue:#92aeff;--orange:#ffc18a;--green:#78d8bd;--red:#ff99aa}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.65 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif}main{max-width:1020px;margin:auto;padding:32px 20px 56px}h1{font-size:28px;margin:0 0 10px}h2{font-size:21px;margin:0 0 12px}p{margin:8px 0 16px}a{color:var(--blue)}section{background:var(--paper);border:1px solid var(--border);border-radius:16px;padding:24px;margin:22px 0}.note{color:var(--muted);font-size:14px}.controls{display:flex;flex-wrap:wrap;gap:20px;align-items:center;margin:16px 0}.slider{display:grid;grid-template-columns:1fr auto;gap:6px;min-width:220px;flex:1}.slider input{grid-column:1/-1;width:100%;accent-color:var(--blue)}input[type=text]{width:100%;padding:10px;border:1px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:16px}select,button{padding:8px 12px;border:1px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font:inherit}button{cursor:pointer}label{display:block}.stat{font-size:36px;font-weight:650;color:var(--blue)}.bar{height:13px;border-radius:5px;background:var(--border);overflow:hidden}.bar span{display:block;height:100%;background:var(--blue);transition:width .1s}.chart{width:100%;height:auto;display:block;max-height:230px}.chart text{fill:var(--muted);font-size:12px}.chart .grid{stroke:var(--border)}.chart .line{stroke:var(--blue);fill:none;stroke-width:3}.chart .point{fill:var(--orange)}table{border-collapse:collapse;width:100%;margin-top:16px;font-variant-numeric:tabular-nums}th,td{padding:9px;text-align:left;border-bottom:1px solid var(--border)}th{font-size:14px;color:var(--muted)}.table-wrap{overflow:auto}.positive{color:var(--green)}.negative{color:var(--red)}.error{color:var(--red)}.pair{display:grid;grid-template-columns:1fr 1fr;gap:22px}.pair>div{padding:16px;border:1px solid var(--border);border-radius:10px}.metric{display:grid;grid-template-columns:120px 1fr 48px;align-items:center;gap:10px;margin:12px 0}.metric .bar span{background:var(--green)}.metric.partial .bar span{background:var(--orange)}output{font-variant-numeric:tabular-nums;font-weight:600}code{font-family:ui-monospace,Menlo,monospace}.formula{padding:10px 14px;background:var(--bg);border-radius:8px;font-size:15px}@media(max-width:650px){main{padding:24px 12px}section{padding:18px}.pair{grid-template-columns:1fr}.metric{grid-template-columns:105px 1fr 44px}}
+</style>
+</head>
+<body><main>
+<h1>奖励设计：三个可调节的数值实验</h1>
+<p>看二值奖励何时有组内对比，分档怎样损失信息，以及“更多测试通过”和“完整成功”为何可能冲突。</p>
+<p class="note">这里是公式计算与教学反例。没有模型训练或真实任务测量；刷新后恢复默认参数。</p>
+<section id="mixed">
+<h2>1. 二值奖励什么时候有成功 / 失败对比</h2>
+<p>同一题采样 G 次。只要既有成功又有失败，二值奖励就能提供 outcome 的组内相对信号。</p>
+<div class="controls">
+<label class="slider" for="probability">单次成功概率 p <output id="probability-value"></output><input id="probability" type="range" min="0" max="1000" value="10" step="1"></label>
+<label class="slider" for="group">每题采样数 G <output id="group-value"></output><input id="group" type="range" min="2" max="64" value="8" step="1"></label>
+</div>
+<div class="stat" id="mixed-value" aria-live="polite"></div>
+<p class="note">出现成功与失败混合组的概率</p>
+<div class="bar" aria-hidden="true"><span id="mixed-bar"></span></div>
+<svg class="chart" viewBox="0 0 720 220" role="img" aria-labelledby="curve-title"><title id="curve-title">混合组概率随单次成功概率变化</title><path class="grid" d="M55 20V178H680 M55 100H680 M55 20H680"/><text x="12" y="25">100%</text><text x="22" y="105">50%</text><text x="30" y="180">0%</text><text x="52" y="200">0%</text><text x="352" y="200">p = 50%</text><text x="650" y="200">100%</text><path id="curve" class="line"/><circle id="curve-point" class="point" r="6"/></svg>
+<div class="formula">P(混合组) = 1 − pᴳ − (1 − p)ᴳ</div>
+<p class="note">假设同题各次采样独立且成功概率相同。全同奖励只意味着这里的 outcome 组优势为零，其他学习目标仍可能有信号。</p>
+</section>
+<section id="quantization">
+<h2>2. 同一批证据，分档与归一化改变了什么</h2>
+<p>输入同题候选的原始测试通过率，查看奖励与组优势。小数本身不代表评分更可靠。</p>
+<label for="rewards">候选通过率（0–1，至少两个，用逗号分隔）<input id="rewards" type="text" value="0.51, 0.54, 0.56, 0.59" inputmode="decimal"></label>
+<div class="controls">
+<label for="mode">奖励方式 <select id="mode"><option value="binary">全通过为 1，否则 0</option><option value="raw" selected>保留原始通过率</option><option value="safe">0.1 分档，失败最高 0.9</option><option value="round">直接四舍五入到 0.1</option></select></label>
+<label><input id="normalize" type="checkbox"> 除以同组样本标准差</label>
+<button id="noise-preset" type="button">看 0.01 的差别</button><button id="near-preset" type="button">看 0.99 被量化为 1</button>
+</div>
+<p id="reward-error" class="error" role="alert"></p>
+<div class="table-wrap"><table><thead><tr><th>候选</th><th>原始证据 u</th><th>完整成功标记</th><th>训练奖励 R</th><th>优势 A</th></tr></thead><tbody id="reward-rows"></tbody></table></div>
+<p id="reward-summary" aria-live="polite"></p>
+<div class="formula" id="adv-formula"></div>
+<p class="note">严格成功始终由原始证据 u = 1 决定。归一化使用样本标准差，分母加 10⁻⁶；只模拟标量 outcome 优势，不包含 PPO 裁剪、token mask、KL 或实际训练。</p>
+</section>
+<section id="objectives">
+<h2>3. 稳定部分完成，还是有机会完整完成</h2>
+<p>策略 A 每次都通过 90% 测试，始终无法完整成功。策略 B 以概率 p 全通过，其他时候全失败。</p>
+<label class="slider" for="strategy-probability">策略 B 的完整成功概率 <output id="strategy-probability-value"></output><input id="strategy-probability" type="range" min="0" max="100" value="50" step="1"></label>
+<div class="pair"><div><strong>策略 A：稳定部分完成</strong><div class="metric"><span>完整成功概率</span><div class="bar"><span style="width:0%"></span></div><output>0.00</output></div><div class="metric partial"><span>期望通过率</span><div class="bar"><span style="width:90%"></span></div><output>0.90</output></div></div><div><strong>策略 B：全通过或全失败</strong><div class="metric"><span>完整成功概率</span><div class="bar"><span id="strategy-success-bar"></span></div><output id="strategy-success"></output></div><div class="metric partial"><span>期望通过率</span><div class="bar"><span id="strategy-partial-bar"></span></div><output id="strategy-partial"></output></div></div></div>
+<p id="strategy-summary" aria-live="polite"></p>
+<p class="note">这是两种随机策略的期望奖励比较。若业务真正关心部分交付，平均通过率也可能是合理目标；若关心完整正确，二者的排序冲突就是代理目标偏差。</p>
+</section>
+<p><a href="/papers/rule-reward-design-binary-partial-credit/">返回调研正文与原始来源</a></p>
+<p class="note">来源解释与条件：MiMo 公开 code 配置；DAPO §3.2；Dr.GRPO §3；Exploring Pass-Rate Reward (2605.02944v1)。上述可调数值均为教学计算。</p>
+</main><script>
+"use strict";
+const el = id => document.getElementById(id);
+const pct = x => (100*x).toFixed(2) + "%";
+function updateMixed(){
+ const p=Number(el("probability").value)/1000,G=Number(el("group").value);
+ const mix=x=>Math.max(0,Math.min(1,1-x**G-(1-x)**G));
+ el("probability-value").textContent=pct(p);el("group-value").textContent=String(G);
+ el("mixed-value").textContent=pct(mix(p));el("mixed-bar").style.width=pct(mix(p));
+ const points=Array.from({length:201},(_,i)=>{const x=i/200;return `${i===0?"M":"L"}${55+625*x},${178-158*mix(x)}`;});
+ el("curve").setAttribute("d",points.join(" "));el("curve-point").setAttribute("cx",String(55+625*p));el("curve-point").setAttribute("cy",String(178-158*mix(p)));
+}
+function updateRewards(){
+ const raw=el("rewards").value.trim().split(/[,，\s]+/).map(Number);
+ if(raw.length<2||raw.length>64||raw.some(x=>!Number.isFinite(x)||x<0||x>1)){
+  el("reward-error").textContent="请输入 2–64 个 0–1 之间的有限数值。";el("reward-rows").replaceChildren();el("reward-summary").textContent="";return;
+ }
+ el("reward-error").textContent="";
+ const mode=el("mode").value,normalize=el("normalize").checked;
+ const rounded=x=>Math.round((x+Number.EPSILON)*10)/10;
+ const rewards=raw.map(x=>mode==="binary"?Number(x===1):mode==="raw"?x:mode==="safe"?(x===1?1:Math.min(.9,rounded(x))):rounded(x));
+ const mean=rewards.reduce((a,b)=>a+b,0)/rewards.length;
+ const sigma=Math.sqrt(rewards.reduce((sum,x)=>sum+(x-mean)**2,0)/(rewards.length-1));
+ const adv=rewards.map(x=>(x-mean)/(normalize?sigma+1e-6:1));
+ const rows=raw.map((x,i)=>{const tr=document.createElement("tr");[String(i+1),x.toFixed(3),x===1?"成功":"失败",rewards[i].toFixed(3),adv[i].toFixed(4)].forEach((value,j)=>{const td=document.createElement("td");td.textContent=value;if(j===4)td.className=adv[i]>1e-12?"positive":adv[i]<-1e-12?"negative":"";tr.appendChild(td);});return tr;});
+ el("reward-rows").replaceChildren(...rows);
+ const phantom=raw.some((x,i)=>x<1&&rewards[i]===1);
+ el("reward-summary").textContent=`奖励均值 ${mean.toFixed(4)}；样本标准差 ${sigma.toFixed(4)}。${sigma<1e-12?"全部奖励相同，组优势为零。":"有奖励差异，但它是否代表真实进展仍需验证。"}${phantom?" 四舍五入已让失败候选得到 1，不能用奖励等于 1 代替成功标记。":""}`;
+ el("adv-formula").textContent=normalize?"Aᵢ = (Rᵢ − mean(R)) / (sample_std(R) + 10⁻⁶)":"Aᵢ = Rᵢ − mean(R)；MiMo 公开 code 默认使用此方式";
+}
+function updateStrategies(){
+ const p=Number(el("strategy-probability").value)/100;
+ el("strategy-probability-value").textContent=pct(p);
+ ["strategy-success","strategy-partial"].forEach(id=>el(id).textContent=p.toFixed(2));
+ ["strategy-success-bar","strategy-partial-bar"].forEach(id=>el(id).style.width=pct(p));
+ const binary=p===0?"无差别":"偏好 B",partial=p<.9?"偏好 A":p>.9?"偏好 B":"无差别";
+ el("strategy-summary").textContent=`二值完整成功奖励${binary}；平均测试通过率奖励${partial}。`;
+}
+el("probability").addEventListener("input",updateMixed);el("group").addEventListener("input",updateMixed);
+el("rewards").addEventListener("input",updateRewards);el("mode").addEventListener("change",updateRewards);el("normalize").addEventListener("change",updateRewards);
+el("noise-preset").addEventListener("click",()=>{el("rewards").value="0.80, 0.81, 0.80, 0.81";el("mode").value="raw";el("normalize").checked=true;updateRewards();});
+el("near-preset").addEventListener("click",()=>{el("rewards").value="0.94, 0.96, 0.99, 1.00";el("mode").value="round";el("normalize").checked=false;updateRewards();});
+el("strategy-probability").addEventListener("input",updateStrategies);
+updateMixed();updateRewards();updateStrategies();
+</script></body></html>

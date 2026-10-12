@@ -1,0 +1,3 @@
+modelscope-hub==0.4.6
+# Use a binary wheel on older Intel Macs as well as current platforms.
+cryptography==46.0.5

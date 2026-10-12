@@ -10,9 +10,13 @@ fi
 
 cd "$READER_DIR"
 "$READER_DIR/build.sh" paper-research-base-knowledge-about-llm-20260717
+"$READER_DIR/.venv/bin/python" "$READER_DIR/tests/test_http_connections.py"
+node --test "$READER_DIR/tests/test_reader_api.js"
 "$READER_DIR/.venv/bin/python" "$READER_DIR/tests/test_storage.py"
+"$READER_DIR/.venv/bin/python" "$READER_DIR/tests/test_document_importance.py"
 "$READER_DIR/.venv/bin/python" "$READER_DIR/tests/test_prepare_docs.py"
 "$READER_DIR/.venv/bin/python" "$READER_DIR/tests/test_knowledge_api.py"
+"$READER_DIR/.venv/bin/python" "$READER_DIR/tests/test_pdf_questions.py"
 "$READER_DIR/.venv/bin/python" "$READER_DIR/tests/test_page_insight.py"
 "$READER_DIR/.venv/bin/python" "$READER_DIR/tests/test_revision_layout.py"
 "$READER_DIR/.venv/bin/python" "$READER_DIR/tests/test_selection_contexts.py"

@@ -14,6 +14,20 @@ BLOCK_TAGS = {"p", "pre", "td", "th", "h1", "h2", "h3", "h4", "h5", "h6"}
 MANIFEST: dict[str, dict] = {}
 
 
+class EvidenceLinks(HTMLParser):
+    """Find the same initial paper as evidence-panel.js at build time."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.links: list[dict] = []
+
+    def handle_starttag(self, tag, attrs) -> None:
+        values = dict(attrs)
+        if (tag == "a" and "evidence-link" in (values.get("class") or "").split()
+                and "data-pdf" in values and "data-page" in values):
+            self.links.append(values)
+
+
 class BlockAnnotator(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -21,6 +35,7 @@ class BlockAnnotator(HTMLParser):
         self.blocks: list[dict] = []
         self.open_blocks: list[dict] = []
         self.counter = 0
+        self.math_counter = 0
         self.list_counter = 0
         self.semantic_counter = 0
         self.list_stack: list[dict] = []
@@ -33,8 +48,13 @@ class BlockAnnotator(HTMLParser):
             group = {"id": f"sl{self.semantic_counter:05d}", "tag": tag, "item_ids": []}
             self.list_stack.append(group)
             self.semantic_order.append({"kind": "list", "value": group})
-        if tag in BLOCK_TAGS or tag == "li":
-            if tag == "li":
+        is_math = tag == "div" and "arithmatex" in (dict(attrs).get("class") or "").split()
+        if tag in BLOCK_TAGS or tag == "li" or is_math:
+            if is_math:
+                # Keep existing paragraph IDs stable for saved selections/revisions.
+                self.math_counter += 1
+                block_id = f"m{self.math_counter:05d}"
+            elif tag == "li":
                 self.list_counter += 1
                 block_id = f"l{self.list_counter:05d}"
             else:
@@ -87,6 +107,13 @@ def on_pre_build(**kwargs) -> None:
 
 
 def on_page_content(html: str, page, **kwargs) -> str:
+    evidence = EvidenceLinks()
+    evidence.feed(html)
+    evidence.close()
+    page.meta["reader_evidence"] = next(
+        (link for link in evidence.links if link.get("data-primary") == "true"),
+        evidence.links[0] if evidence.links else {},
+    )
     document_id = page.file.src_uri
     if not (document_id.startswith("papers/") or document_id == "report/index.md"):
         return html

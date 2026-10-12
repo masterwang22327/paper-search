@@ -178,6 +178,7 @@ def check_reading_progress() -> None:
         assert initial["checkpoint"] is None
         assert initial["resume_position"] is None
         assert initial["note"] is None
+        assert initial["notes"] == []
 
         position = {
             "block_id": "b00001",
@@ -241,13 +242,64 @@ def check_reading_progress() -> None:
         assert noted["note"]["text"] == "这里需要回看定义。"
         assert noted["note"]["position"]["heading_id"] == "method"
 
+        first_id = noted["notes"][0]["id"]
+        another = state.save_reading_progress({
+            "action": "note", "document_id": "papers/paper.md", "document_sha256": "document-sha-a",
+            "text": "结论里还有一个问题。",
+            "position": {**position, "heading_id": "conclusion", "heading_title": "结论", "section_index": 2},
+        })
+        second_id = another["notes"][1]["id"]
+        assert first_id != second_id
+        assert len(state.get_reading_progress("papers/paper.md")["notes"]) == 2
+        edited = state.save_reading_progress({
+            "action": "note", "note_id": first_id, "document_id": "papers/paper.md",
+            "document_sha256": "document-sha-a", "text": "已补充定义。",
+            "position": another["notes"][1]["position"],
+        })
+        assert edited["notes"][0]["position"] == position
+        assert edited["notes"][0]["text"] == "已补充定义。"
+        assert edited["notes"][1] == another["notes"][1]
+
         deleted = state.save_reading_progress({
             "kind": "document",
             "action": "delete_note",
+            "note_id": first_id,
             "document_id": "papers/paper.md",
             "document_sha256": "document-sha-a",
         })
-        assert deleted["note"] is None
+        assert [note["id"] for note in deleted["notes"]] == [second_id]
+        for action, note_id, expected in (("delete_note", None, 400), ("delete_note", first_id, 404), ("note", first_id, 404)):
+            try:
+                state.save_reading_progress({
+                    "action": action, "note_id": note_id, "document_id": "papers/paper.md",
+                    "document_sha256": "document-sha-a", "text": "过期的编辑请求", "position": position,
+                })
+                raise AssertionError("invalid note mutation accepted")
+            except reader_server.ApiError as error:
+                assert error.status == expected
+        assert state.get_reading_progress("papers/paper.md")["notes"] == deleted["notes"]
+
+        # A legacy single note survives GETs and the first new-note save, exactly once.
+        legacy = {"document_sha256": "older-sha", "note": {
+            "text": "已有便签", "position": position, "updated_at": "2026-09-01T00:00:00Z",
+        }}
+        state.save_runtime_json(state.reading_progress_path("papers/paper.md"), legacy)
+        migrated = state.get_reading_progress("papers/paper.md")
+        assert migrated["notes"][0]["id"] == "legacy-note"
+        assert state.load_runtime_json(state.reading_progress_path("papers/paper.md"), {}) == legacy
+        migrated = state.save_reading_progress({
+            "action": "note", "document_id": "papers/paper.md", "document_sha256": "document-sha-a",
+            "text": "新增便签", "position": position,
+        })
+        assert len(migrated["notes"]) == 2
+        assert migrated["notes"][0]["text"] == "已有便签"
+        assert migrated["notes"][0]["document_sha256"] == "older-sha"
+        migrated = state.save_reading_progress({
+            "action": "delete_note", "note_id": "legacy-note", "document_id": "papers/paper.md",
+            "document_sha256": "document-sha-a",
+        })
+        assert len(migrated["notes"]) == 1
+        assert state.get_reading_progress("papers/paper.md")["notes"] == migrated["notes"]
 
         try:
             state.save_reading_progress({
@@ -414,6 +466,10 @@ def check_site_fingerprint() -> None:
         reader_build.REPO_DIR = repo
         reader_build.READER_DIR = reader_dir
         try:
+            fingerprint = reader_build.site_input_fingerprint("task-a")
+            (reader_dir / "overrides").mkdir()
+            (reader_dir / "overrides" / "main.html").write_text("{% extends 'base.html' %}")
+            assert reader_build.site_input_fingerprint("task-a") != fingerprint
             fingerprint = reader_build.site_input_fingerprint("task-a")
             generated = repo / "generated"
             generated.mkdir()

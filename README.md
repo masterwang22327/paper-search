@@ -20,6 +20,10 @@ YOLO 模式 Codex CLI，按一次 Enter。
 个人学习画像 [docs/learning-profile.md](docs/learning-profile.md) 是有意公开并纳入版本控制的长期配置。
 其他个人内容进入仓库前应先做单独审查。凭据处理和泄漏后的处置见 [SECURITY.md](SECURITY.md)。
 
+完整论文阅读服务可以通过 [新电脑恢复指南](docs/reader-migration.md) 迁移：GitHub 保存代码，
+ModelScope 私有数据集保存全部任务、PDF、问题/回答、知识笔记、修订、译文和关联 Codex 会话。
+备份/恢复入口为 `tools/reader_backup.py`，API 密钥与虚拟环境单独配置。
+
 ## 环境要求
 
 - Python 3.11 或更高版本；

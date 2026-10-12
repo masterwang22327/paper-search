@@ -1,0 +1,59 @@
+# LLM 核心论文阅读手册
+
+这不是一份按年份堆叠的论文清单，而是一条面向算法工程师的学习路线：先弄清问题，再看计算流程，最后核对实验与证据边界。
+
+!!! abstract "20260911论文补读路线"
+    结合 Agent RL 后训练项目，沿十个问题精读 28 篇论文：奖励、信用分配、GRPO、搜索、蒸馏、工具评测、RL 系统、翻译、检索，以及 F5-TTS 专项。每章附原文页码、关键公式与最小消融。
+
+    [进入论文补读路线](papers/20260911-reading-route.md){ .md-button .md-button--primary }
+    [直接阅读 F5-TTS](papers/20260911-f5tts.md){ .md-button }
+
+!!! abstract "当前研究：从现成 Instruct checkpoint 出发，后训练还能把能力推多远"
+    只接纳真实 released-Instruct 起点，按成功样本密度、reward 密度、外部 target 新颖度与旧能力覆盖来选择 trajectory SFT、direct RL、知识蒸馏或 replay，并以 Qwen3-Coder Instruct 的 matched 决策实验收口。
+
+    [进入专题精读](papers/instruct-model-effective-post-training.md){ .md-button .md-button--primary }
+
+<div class="reader-cards" markdown>
+
+- :material-map-outline: **先看全局地图**
+
+  用综合报告串起架构、训练目标、数据、规模、后训练、系统与评测。
+
+- :material-microscope: **再读专题**
+
+  每篇先回答“解决什么、怎样解决、不能说明什么”，再进入公式和实现细节。
+
+- :material-source-branch: **需要时回查证据**
+
+  沿页码打开固定 PDF，区分论文结论、本手册解释和代码快照事实。
+
+</div>
+
+[开始阅读综合报告](report/index.md){ .md-button .md-button--primary }
+[查看推荐路线](reading-guide.md){ .md-button }
+
+!!! info "阅读原则"
+    先理解主线，再核查细节。报告中的“作者主张、来源事实、工件事实、本报告推断、未知”是不同证据等级，不能互相替代。
+
+## 三种使用方式
+
+| 你的目标 | 推荐入口 | 阅读深度 |
+|---|---|---|
+| 快速补齐知识框架 | 综合报告第 0、1、11、13 节 | 约 1–2 小时 |
+| 系统补齐 LLM 基础 | 左侧“专题精读”依赖路线 | 按阶段连续阅读 |
+| 解决当前工程问题 | 阅读指南中的任务跳读路线 | 只读强关联分支 |
+| 核查某条结论 | 来源目录与原始 PDF | 按证据位置定点阅读 |
+
+## 一篇专题应该怎样读
+
+1. **核心结论**：先知道论文解决了什么，以及结论的适用边界。
+2. **问题与方法**：再看旧方法为什么不够、新方法具体改了哪里。
+3. **数据与计算流程**：沿张量、状态或梯度的流向理解公式；变量应在首次出现时解释。
+4. **实验与边界**：最后确认实验真正测了什么，避免把局部结果推广成普遍规律。
+
+## 内容边界
+
+本站是 `tasks/` 中调研成果的自动生成阅读副本。运行状态、中间 handoff 和控制文件不作为主要学习材料；原始研究文件不会被本站生成过程修改。
+
+!!! tip "Embedding 模型系统调研 · 2026-09-14 更新"
+    [连续阅读合并版](papers/embedding-models-lineage-selection.md)：五篇原文合为一条主线，补充 12 篇固定来源，覆盖小模型蒸馏、长文档、多模态、推理式检索与评测。

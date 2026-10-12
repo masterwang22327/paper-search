@@ -13,6 +13,9 @@ import math
 import os
 import re
 import secrets
+import selectors
+import signal
+import shlex
 import shutil
 import ssl
 import subprocess
@@ -66,7 +69,7 @@ MAX_RENDERED_PAGE = 25 * 1024 * 1024
 PDF_RENDER_MAX_DIMENSION = 2200
 TRANSLATION_PROTOCOL_VERSION = "paper-reader-translation-v1"
 SOURCE_MAP_VERSION = "paper-reader-source-map-v1"
-READING_PROGRESS_VERSION = 2
+READING_PROGRESS_VERSION = 3
 MAX_TRANSLATION_TEXT = 30_000
 MAX_TRANSLATION_BLOCKS = 160
 MIN_TRANSLATION_COVERAGE_SOURCE_CHARS = 1200
@@ -77,18 +80,20 @@ MAX_TABLE_COLUMNS = 30
 MAX_TABLE_ROWS = 200
 MAX_FIGURE_LABELS = 80
 MAX_FLOW_STEPS = 40
-DEFAULT_TRANSLATION_MODEL = "gpt-5.6-terra"
+DEFAULT_READER_MODEL = "gpt-6.1-sol"
+DEFAULT_TRANSLATION_MODEL = DEFAULT_READER_MODEL
 DEFAULT_TRANSLATION_REASONING_EFFORT = "medium"
-DEFAULT_RETRANSLATION_MODEL = "gpt-5.6-sol"
+DEFAULT_RETRANSLATION_MODEL = DEFAULT_READER_MODEL
 DEFAULT_RETRANSLATION_REASONING_EFFORT = "high"
-DEFAULT_KNOWLEDGE_MODEL = "gpt-5.6-terra"
+DEFAULT_KNOWLEDGE_MODEL = DEFAULT_READER_MODEL
 DEFAULT_KNOWLEDGE_REASONING_EFFORT = "medium"
-REVISION_MODELS = {"gpt-5.6-terra", "gpt-5.6-sol", "gpt-6-astra"}
-REVISION_REASONING_EFFORTS = {"medium", "high", "xhigh", "max", "ultra"}
-ASTRA_REASONING_EFFORTS = {"low", "medium", "high", "xhigh", "max"}
+REVISION_MODELS = {"gpt-6-astra", "gpt-6.1-sol"}
+REVISION_REASONING_EFFORTS = {"low", "medium", "high", "xhigh", "max", "ultra"}
+GPT6_REASONING_EFFORTS = {"low", "medium", "high", "xhigh", "max"}
 REVISION_HISTORY_SOFT_TOKENS = 500_000
 REVISION_MARKDOWN_MAX_CHARS = 24_000
-REVISION_CONTEXT_POLICY = "research-explanation-v1"
+REVISION_GENERATION_TIMEOUT = 1800
+REVISION_CONTEXT_POLICY = "research-explanation-v2-autonomous-reading"
 # Bump this whenever the capabilities or evidence contract changes. Threads
 # created under an older policy must not resume with stale instructions.
 KNOWLEDGE_CONTEXT_POLICY = "research-assisted-v4"
@@ -115,14 +120,15 @@ TRANSLATION_MATH_DISPLAY_REPLACEMENTS = str.maketrans({
 
 
 class ApiError(Exception):
-    def __init__(self, status: int, message: str) -> None:
+    def __init__(self, status: int, message: str, code: str | None = None) -> None:
         super().__init__(message)
         self.status = status
         self.message = message
+        self.code = code
 
 
 def model_reasoning_efforts(model: str) -> set[str]:
-    return ASTRA_REASONING_EFFORTS if model == "gpt-6-astra" else REVISION_REASONING_EFFORTS
+    return GPT6_REASONING_EFFORTS if model.startswith("gpt-6") else REVISION_REASONING_EFFORTS
 
 
 def now_iso() -> str:
@@ -167,9 +173,15 @@ class ReaderState:
         self.translation_api_url = self.load_translation_api_url()
         self.translation_model = os.environ.get("READER_TRANSLATION_MODEL", DEFAULT_TRANSLATION_MODEL)
         self.retranslation_model = os.environ.get("READER_RETRANSLATION_MODEL", DEFAULT_RETRANSLATION_MODEL)
+        if self.translation_model not in REVISION_MODELS:
+            self.translation_model = DEFAULT_TRANSLATION_MODEL
+        if self.retranslation_model not in REVISION_MODELS:
+            self.retranslation_model = DEFAULT_RETRANSLATION_MODEL
         self.retranslation_reasoning_effort = os.environ.get(
             "READER_RETRANSLATION_REASONING_EFFORT", DEFAULT_RETRANSLATION_REASONING_EFFORT
         )
+        if self.retranslation_reasoning_effort not in model_reasoning_efforts(self.retranslation_model):
+            self.retranslation_reasoning_effort = DEFAULT_RETRANSLATION_REASONING_EFFORT
         self.translation_api_key = (
             self.load_translation_api_key(self.translation_api_url)
             if self.translation_api_url
@@ -185,7 +197,9 @@ class ReaderState:
         self.translation_jobs: dict[str, threading.Thread] = {}
         self.translation_job_stops: dict[str, threading.Event] = {}
         self.translation_job_responses: dict[str, set[object]] = {}
+        self.codex_progress: dict[str, dict] = {}
         self.chat_request_locks: dict[tuple[str, str], threading.Lock] = {}
+        self.exploration_locks: dict[str, threading.Lock] = {}
         self.page_insight_locks: dict[str, threading.Lock] = {}
         self.lock = threading.RLock()
         if not self.task_dir.is_dir() or not self.site_manifest.get("documents"):
@@ -648,7 +662,7 @@ class ReaderState:
                 raise ApiError(HTTPStatus.BAD_REQUEST, "无效文档标识")
             path = self.task_dir / "papers" / name
         else:
-            raise ApiError(HTTPStatus.BAD_REQUEST, "该页面不支持知识问答")
+            raise ApiError(HTTPStatus.BAD_REQUEST, "该页面不支持论文问答")
         if not path.is_file():
             raise ApiError(HTTPStatus.NOT_FOUND, "文档不存在")
         return path
@@ -1424,6 +1438,8 @@ class ReaderState:
         max_output_tokens: int = 30000,
         cancel_event: threading.Event | None = None,
         job_source_id: str | None = None,
+        web_search: bool = False,
+        search_evidence: dict | None = None,
     ) -> tuple[str, str]:
         # Resolve before every stateless call so provider and API-key rotation
         # in CODEX_HOME takes effect without changing or restarting Reader.
@@ -1471,6 +1487,9 @@ class ReaderState:
                 }
             },
         }
+        if web_search:
+            payload["tools"] = [{"type": "web_search", "search_context_size": "low"}]
+            payload["include"] = ["web_search_call.action.sources"]
         request = Request(
             translation_api_url,
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
@@ -1512,6 +1531,8 @@ class ReaderState:
                     except json.JSONDecodeError:
                         continue
                     event_type = event.get("type")
+                    if search_evidence is not None and event_type == "response.output_item.done":
+                        self.record_search_evidence(search_evidence, event.get("item", {}))
                     if event_type == "response.output_text.delta" and isinstance(event.get("delta"), str):
                         chunks.append(event["delta"])
                     elif event_type == "error":
@@ -1526,6 +1547,9 @@ class ReaderState:
                     if isinstance(response_value, dict):
                         response_id = str(response_value.get("id", response_id))[:200]
                         if event_type == "response.completed":
+                            if search_evidence is not None:
+                                for item in response_value.get("output", []):
+                                    self.record_search_evidence(search_evidence, item)
                             try:
                                 completed_text = self.response_output_text(response_value)
                             except ApiError:
@@ -1539,12 +1563,16 @@ class ReaderState:
                             message = error_value.get("message", "未知错误") if isinstance(error_value, dict) else "未知错误"
                             terminal_error = f"模型生成失败：{message}"
         except HTTPError as error:
-            error.read(2000)
+            detail = error.read(2000).decode("utf-8", errors="replace").lower()
+            if web_search and error.code in {400, 422} and any(word in detail for word in ("web_search", "tools", "web search")):
+                raise ApiError(HTTPStatus.BAD_GATEWAY, "当前模型服务不支持联网搜索", code="web_search_unavailable") from error
             print(f"Responses API error: HTTP {error.code}", flush=True)
             raise ApiError(HTTPStatus.BAD_GATEWAY, f"模型服务调用失败（HTTP {error.code}）") from error
         except (URLError, TimeoutError, http.client.RemoteDisconnected, OSError, ValueError) as error:
             if cancel_event and cancel_event.is_set():
                 raise ApiError(HTTPStatus.CONFLICT, "全文翻译已停止") from error
+            if web_search and isinstance(error, http.client.RemoteDisconnected):
+                raise ApiError(HTTPStatus.BAD_GATEWAY, "搜索请求连接中断", code="web_search_unavailable") from error
             raise ApiError(HTTPStatus.GATEWAY_TIMEOUT, "模型服务连接失败或超时") from error
         except Exception as error:
             if cancel_event and cancel_event.is_set():
@@ -1562,6 +1590,22 @@ class ReaderState:
         if not chunks:
             raise ApiError(HTTPStatus.BAD_GATEWAY, "翻译服务没有返回正文")
         return "".join(chunks), response_id
+
+    @staticmethod
+    def record_search_evidence(evidence: dict, item: dict) -> None:
+        """Record URLs from API tool results, never from model-written JSON."""
+        if not isinstance(item, dict):
+            return
+        if item.get("type") == "web_search_call" and item.get("status") == "completed":
+            evidence["searched"] = True
+            for source in item.get("action", {}).get("sources", []):
+                if isinstance(source, dict) and isinstance(source.get("url"), str):
+                    evidence.setdefault("urls", set()).add(source["url"])
+        if item.get("type") == "message":
+            for content in item.get("content", []):
+                for annotation in content.get("annotations", []):
+                    if annotation.get("type") == "url_citation" and isinstance(annotation.get("url"), str):
+                        evidence.setdefault("urls", set()).add(annotation["url"])
 
     def call_translation_api(
         self,
@@ -2072,7 +2116,8 @@ class ReaderState:
             "reasoning_effort": effort,
             "pdf_sha256": self.file_sha256(self.source_pdf(context["source_id"])),
             "prompt_sha256": hashlib.sha256((prompt + schema).encode("utf-8")).hexdigest(),
-            "protocol_version": "page-knowledge-aligned-v4",
+            "protocol_version": "page-understanding-v5",
+            "reading_date": now_iso()[:10],
         }
         key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode("utf-8")).hexdigest()
         return identity, self.user_dir / "page-insights" / f"{key}.json", prompt
@@ -2152,6 +2197,9 @@ class ReaderState:
                     break
             evidence = {
                 "source_id": source_id,
+                "reading_date": identity["reading_date"],
+                "reading_timezone": str(datetime.now().astimezone().tzinfo),
+                "paper_published": metadata.get("published", "未知"),
                 "physical_page": page,
                 "page_count": page_count,
                 "paper_title": metadata.get("title", ""),
@@ -2165,23 +2213,47 @@ class ReaderState:
                 "paper_opening_text": self.pdf_page_text(source_id, 1)[:6000] if page != 1 else "",
                 "image_attachment": "第一张为当前物理页原始 PDF；其余图片按 image_pages_in_order 标注，为前后各两页上下文。仅框选和解析第一张图。",
             }
-            answer, _ = self.call_responses_api(
-                json.dumps(evidence, ensure_ascii=False),
-                READER_DIR / "schemas" / "page-insight.schema.json",
-                "paper_page_insight",
-                image_contexts=image_contexts,
-                system_prompt=instructions,
-                model=identity["model"],
-                reasoning_effort=identity["reasoning_effort"],
-                max_output_tokens=24000,
-            )
+            search_evidence = {}
+            call_options = dict(image_contexts=image_contexts, system_prompt=instructions,
+                                model=identity["model"], reasoning_effort=identity["reasoning_effort"],
+                                max_output_tokens=16000, web_search=True, search_evidence=search_evidence)
+            args = (json.dumps(evidence, ensure_ascii=False),
+                    READER_DIR / "schemas" / "page-insight.schema.json", "paper_page_insight")
+            search_unavailable = False
+            try:
+                answer, _ = self.call_responses_api(*args, **call_options)
+            except ApiError as error:
+                if error.code != "web_search_unavailable":
+                    raise
+                search_unavailable = True
+                search_evidence.clear()
+                call_options.update(web_search=False, system_prompt=instructions +
+                    "\n本轮搜索服务不可用。modern_view 只允许稳定概念层面的解释，不作最新研究断言，sources 必须为空。")
+                answer, _ = self.call_responses_api(*args, **call_options)
             try:
                 result = self.validate_page_insight(json.loads(answer))
             except (json.JSONDecodeError, TypeError) as error:
                 raise ApiError(HTTPStatus.BAD_GATEWAY, "模型未返回完整知识解析，请重试") from error
+            modern = result["modern_view"]
+            urls = search_evidence.get("urls", set())
+            sources = modern["sources"]
+            def published_by_reading_date(source: dict) -> bool:
+                date = re.match(r"^\d{4}(?:-\d{2}(?:-\d{2})?)?", source["published"])
+                return not date or date.group() <= identity["reading_date"][:len(date.group())]
+            verified = bool(sources) and all(
+                source["url"] in urls and urlparse(source["url"]).scheme in {"http", "https"}
+                and bool(urlparse(source["url"]).netloc) and published_by_reading_date(source) for source in sources)
+            if sources and not verified:
+                # Don't display current-research claims backed by invented/unobserved URLs.
+                modern["summary"] = "本次当代研究补充的来源未通过核对，已隐藏。可重新解析以再次核验。"
+                modern["sources"] = []
+            freshness = {
+                "status": "verified" if verified else "unavailable" if search_unavailable else "unverified",
+                "reading_date": identity["reading_date"],
+            }
             if self.file_sha256(self.source_pdf(source_id)) != identity["pdf_sha256"]:
                 raise ApiError(HTTPStatus.CONFLICT, "生成期间 PDF 文件发生变化，请重新生成")
-            saved = {**identity, "created_at": now_iso(), "content": result}
+            saved = {**identity, "created_at": now_iso(), "content": result, "freshness": freshness}
             self.save_runtime_json(path, saved)
             return {"insight": saved, "cached": False}
         finally:
@@ -2512,6 +2584,27 @@ PDF 文本提取对公式和符号不可靠。{visual_math_instruction}
     def doc_key(self, document_id: str) -> str:
         return hashlib.sha256(document_id.encode("utf-8")).hexdigest()[:20]
 
+    def document_importance(self) -> dict:
+        with self.lock:
+            return self.load_runtime_json(self.user_dir / "document-importance.json", {"ratings": {}})
+
+    def save_document_importance(self, payload: dict) -> dict:
+        document_id = payload.get("document_id")
+        score = payload.get("score")
+        if not isinstance(document_id, str):
+            raise ApiError(HTTPStatus.BAD_REQUEST, "无效文档标识")
+        self.document_path(document_id)
+        if type(score) is not int or not 0 <= score <= 5:
+            raise ApiError(HTTPStatus.BAD_REQUEST, "重要性必须为 1–5 分，0 表示清除评分")
+        with self.lock:
+            value = self.document_importance()
+            if score:
+                value["ratings"][document_id] = score
+            else:
+                value["ratings"].pop(document_id, None)
+            self.save_runtime_json(self.user_dir / "document-importance.json", value)
+        return {"document_id": document_id, "score": score}
+
     def reading_progress_path(self, document_id: str) -> Path:
         self.document_path(document_id)
         return self.user_dir / "reading-progress" / f"document-{self.doc_key(document_id)}.json"
@@ -2634,10 +2727,23 @@ PDF 文本提取对公式和符号不可靠。{visual_math_instruction}
         if not isinstance(text, str) or not text.strip() or not isinstance(position, dict):
             return None
         return {
+            "id": str(value.get("id") or "legacy-note"),
             "text": text[:MAX_READING_NOTE],
             "position": dict(position),
             "updated_at": str(updated_at or "")[:80],
+            "document_sha256": str(value.get("document_sha256") or ""),
         }
+
+    def public_reading_notes(self, stored: dict) -> list[dict]:
+        # Read old single-note records without rewriting them on a GET.
+        values = stored.get("notes") if isinstance(stored.get("notes"), list) else [stored.get("note")]
+        notes = []
+        for value in values:
+            note = self.public_reading_note(value)
+            if note:
+                note["document_sha256"] = note["document_sha256"] or str(stored.get("document_sha256") or "")
+                notes.append(note)
+        return notes
 
     @staticmethod
     def public_reading_position(value: object) -> dict | None:
@@ -2652,6 +2758,7 @@ PDF 文本提取对公式和符号不可靠。{visual_math_instruction}
             stored = {}
         checkpoint = self.public_reading_position(stored.get("checkpoint"))
         resume_position = self.public_reading_position(stored.get("resume_position")) or checkpoint
+        notes = self.public_reading_notes(stored)
         return {
             "schema_version": READING_PROGRESS_VERSION,
             "kind": "document",
@@ -2660,7 +2767,8 @@ PDF 文本提取对公式和符号不可靠。{visual_math_instruction}
             "stale": bool(stored.get("document_sha256") and stored.get("document_sha256") != current_sha256),
             "checkpoint": checkpoint,
             "resume_position": resume_position,
-            "note": self.public_reading_note(stored.get("note")),
+            "notes": notes,
+            "note": notes[0] if notes else None,
         }
 
     def save_reading_progress(self, payload: dict) -> dict:
@@ -2680,6 +2788,7 @@ PDF 文本提取对公式和符号不可靠。{visual_math_instruction}
                 stored = self.load_runtime_json(path, {})
                 if not isinstance(stored, dict):
                     stored = {}
+                notes = self.public_reading_notes(stored)
                 stored.update({
                     "schema_version": READING_PROGRESS_VERSION,
                     "kind": "document",
@@ -2706,12 +2815,33 @@ PDF 文本提取对公式和符号不可靠。{visual_math_instruction}
                     text = self.validate_reading_text(
                         payload.get("text"), "便签内容", MAX_READING_NOTE, required=True
                     )
-                    position = self.validate_document_reading_position(
-                        document_id, current_sha256, payload.get("position")
-                    )
-                    stored["note"] = {"text": text, "position": position, "updated_at": now_iso()}
+                    note_id = payload.get("note_id")
+                    if note_id:
+                        note = next((note for note in notes if note["id"] == note_id), None)
+                        if note is None:
+                            raise ApiError(HTTPStatus.NOT_FOUND, "便签不存在，请刷新后重试")
+                        # Editing text must not move its original chapter/paragraph.
+                        note.update(text=text, updated_at=now_iso())
+                    else:
+                        position = self.validate_document_reading_position(
+                            document_id, current_sha256, payload.get("position")
+                        )
+                        notes.append({
+                            "id": uuid.uuid4().hex,
+                            "text": text,
+                            "position": position,
+                            "updated_at": now_iso(),
+                            "document_sha256": current_sha256,
+                        })
                 else:
-                    stored["note"] = None
+                    note_id = payload.get("note_id")
+                    if not note_id:
+                        raise ApiError(HTTPStatus.BAD_REQUEST, "请选择要删除的便签")
+                    if not any(note["id"] == note_id for note in notes):
+                        raise ApiError(HTTPStatus.NOT_FOUND, "便签不存在，请刷新后重试")
+                    notes = [note for note in notes if note["id"] != note_id]
+                stored["notes"] = notes
+                stored.pop("note", None)
                 self.save_runtime_json(path, stored)
             return self.get_reading_progress(document_id=document_id)
 
@@ -2798,10 +2928,12 @@ PDF 文本提取对公式和符号不可靠。{visual_math_instruction}
 
     def revision_settings(self) -> dict:
         value = self.load_runtime_json(self.revision_settings_path, {})
-        model = str(value.get("model", DEFAULT_TRANSLATION_MODEL))
+        model = str(value.get("model", DEFAULT_READER_MODEL))
         effort = str(value.get("effort", DEFAULT_TRANSLATION_REASONING_EFFORT))
         if model not in REVISION_MODELS:
-            model = DEFAULT_TRANSLATION_MODEL
+            model = DEFAULT_READER_MODEL
+        if effort == "ultra":
+            effort = "max"
         if effort not in model_reasoning_efforts(model):
             effort = DEFAULT_TRANSLATION_REASONING_EFFORT
         return {"model": model, "effort": effort}
@@ -2823,6 +2955,8 @@ PDF 文本提取对公式和符号不可靠。{visual_math_instruction}
         effort = str(value.get("effort", DEFAULT_KNOWLEDGE_REASONING_EFFORT))
         if model not in REVISION_MODELS:
             model = DEFAULT_KNOWLEDGE_MODEL
+        if effort == "ultra":
+            effort = "max"
         if effort not in model_reasoning_efforts(model):
             effort = DEFAULT_KNOWLEDGE_REASONING_EFFORT
         return {"model": model, "effort": effort}
@@ -2833,7 +2967,7 @@ PDF 文本提取对公式和符号不可靠。{visual_math_instruction}
         model = str(payload.get("model", ""))
         effort = str(payload.get("effort", payload.get("reasoning_effort", "")))
         if model not in REVISION_MODELS or effort not in model_reasoning_efforts(model):
-            raise ApiError(HTTPStatus.BAD_REQUEST, "知识问答模型配置无效")
+            raise ApiError(HTTPStatus.BAD_REQUEST, "论文问答模型配置无效")
         value = {"model": model, "effort": effort, "updated_at": now_iso()}
         with self.lock:
             self.save_runtime_json(self.knowledge_settings_path(document_id), value)
@@ -2956,7 +3090,7 @@ PDF 文本提取对公式和符号不可靠。{visual_math_instruction}
         identifiers = revision_source_ids(relevant_text + "\n" + context["article_markdown"])
         sources = []
         store = getattr(self, "task_artifact_store", None)
-        for source_id in identifiers[:8]:
+        for source_id in identifiers:
             source_dir = self.task_dir / "sources" / source_id
             if not source_dir.resolve().is_relative_to(self.task_dir.resolve()):
                 continue
@@ -2968,12 +3102,27 @@ PDF 文本提取对公式和符号不可靠。{visual_math_instruction}
                     for path in sorted(source_dir.rglob("*"))
                     if path.is_file() and path.resolve().is_relative_to(self.task_dir.resolve())
                 ]
-            sources.append({"source_id": source_id, "files": paths[:80], "omitted_files": max(0, len(paths) - 80)})
+            sources.append({"source_id": source_id, "files": paths, "omitted_files": 0})
+        reader_command = [str(READER_DIR / ".venv/bin/python"), str(READER_DIR / "revision_materials.py"),
+                          "--task-dir", str(self.task_dir)]
+        code_links = list(dict.fromkeys(re.findall(
+            r"https://github\.com/[\w.-]+/[\w.-]+/blob/[0-9a-fA-F]{40}/[^\s)\]>]+", context["article_markdown"])))
         context["evidence_access"] = {
             "task_directory": str(self.task_dir),
             "article_path": str(document_path.relative_to(self.task_dir)),
             "sources": sources,
-            "omitted_source_count": max(0, len(identifiers) - 8),
+            "omitted_source_count": 0,
+            "research_reader": {
+                "command": shlex.join(reader_command),
+                "list_all_documents_and_sources": shlex.join([*reader_command, "list"]),
+                "read_current_article": shlex.join([*reader_command, "read", document_path.relative_to(self.task_dir).as_posix()]),
+                "fixed_code_links_in_article": code_links,
+                "usage": "list 列出全部文档和证据；search '关键词' [--prefix sources/来源/] 搜索文本及归档源码；"
+                         "read '任务相对路径' 读取完整文件，包括 SQLite 内的工件和本地 PDF。"
+                         "可自行加 --start/--end 选行，或 --first-page/--last-page 选 PDF 物理页。"
+                         "本地未归档的固定版本源码可用 github-code 'GitHub commit URL' 直接只读获取，并返回行号。"
+                         "没有固定文件数、读取次数或字数截断，按问题决定范围。命令及文件均只读。",
+            },
             "artifact_database": str(store.database) if store else None,
             "artifact_read_instructions": (
                 "先读取存在的本地文件。若只在 SQLite 中，使用 Python sqlite3 以 file:路径?mode=ro、uri=True 连接，"
@@ -2984,6 +3133,18 @@ PDF 文本提取对公式和符号不可靠。{visual_math_instruction}
         return context
 
     def propose_revision(self, payload: dict) -> dict:
+        progress_job_id = str(payload.get("progress_job_id", "")).strip() or None
+        self.begin_codex_progress(progress_job_id)
+        try:
+            result = self._propose_revision(payload, progress_job_id)
+        except Exception as error:
+            self.finish_codex_progress(progress_job_id,
+                error=error.message if isinstance(error, ApiError) else "failed")
+            raise
+        self.finish_codex_progress(progress_job_id)
+        return result
+
+    def _propose_revision(self, payload: dict, progress_job_id: str | None) -> dict:
         document_id = str(payload.get("document_id", ""))
         sha256 = str(payload.get("document_sha256", ""))
         document_path = self.document_path(document_id)
@@ -3021,14 +3182,24 @@ PDF 文本提取对公式和符号不可靠。{visual_math_instruction}
         if discussion and (
             discussion.get("document_sha256") != sha256
             or discussion.get("target_blocks") != selected_ids
+            or discussion.get("target_text") != "\n\n".join(item["text"] for item in contexts)
         ):
-            raise ApiError(HTTPStatus.CONFLICT, "修订讨论对应的原文已经变化")
+            raise ApiError(HTTPStatus.CONFLICT, "修订讨论对应的原文或选区已经变化，请重新开始讨论")
         discussion_history, discussion_history_usage = self.revision_discussion_context(
             (discussion or {}).get("turns", [])
         )
         prompt_path = READER_DIR / "prompts" / "document-revision.md"
         system_prompt = prompt_path.read_text(encoding="utf-8")
         article_context = self.revision_reading_context(document, document_path, selected_ids)
+        if discussion_id and getattr(self, "runtime_store", None):
+            article_context["evidence_access"]["complete_discussion"] = {
+                "database": str(self.runtime_store.database),
+                "path": self.runtime_store.key_for(self.user_dir, self.revision_discussions_path(document_id)),
+                "discussion_id": discussion_id,
+                "read_instructions": "以 sqlite3 file:路径?mode=ro、uri=True 连接；SELECT content FROM files WHERE path = ?。"
+                                     "JSON 的 items 中按 discussion_id 找到讨论，turns 包含全部轮次。"
+                                     "若提示中的历史因上下文预算省略，按需查阅这里的完整记录。",
+            }
         user_context = {
             "document": {
                 "title": self.markdown_title(document_path),
@@ -3051,7 +3222,11 @@ PDF 文本提取对公式和符号不可靠。{visual_math_instruction}
             + json.dumps(user_context, ensure_ascii=False, indent=2)
         )
         generation_prompt = revision_prompt
+        generation_deadline = time.monotonic() + REVISION_GENERATION_TIMEOUT
         for attempt in range(2):
+            remaining = generation_deadline - time.monotonic()
+            if remaining <= 0:
+                raise ApiError(HTTPStatus.GATEWAY_TIMEOUT, "修订生成超时，请重试本轮问题")
             answer, _ = self.run_codex(
                 generation_prompt,
                 None,
@@ -3060,7 +3235,10 @@ PDF 文本提取对公式和符号不可靠。{visual_math_instruction}
                 model=settings["model"],
                 reasoning_effort=settings["effort"],
                 ephemeral=True,
+                progress_job_id=progress_job_id,
+                timeout=remaining,
             )
+            self.update_codex_progress(progress_job_id, "validating", "正在校验讲解格式与引用…")
             try:
                 result = self.validate_revision_result(self.parse_revision_json(answer))
                 break
@@ -3068,6 +3246,7 @@ PDF 文本提取对公式和符号不可靠。{visual_math_instruction}
                 if attempt:
                     raise
                 print(f"Revision format repair: {error.message}", flush=True)
+                self.update_codex_progress(progress_job_id, "repairing", "正在修复候选的输出格式…")
                 generation_prompt = (
                     "修复以下候选的输出格式，严格返回 document-revision Schema 的完整 JSON。"
                     "保留已有讲解、代码、引用和有效可视化，不改成摘要、不新增事实或研究。"
@@ -3267,12 +3446,13 @@ PDF 文本提取对公式和符号不可靠。{visual_math_instruction}
     def append_chat(self, document_id: str, thread_id: str, message: dict) -> None:
         self.append_runtime_jsonl(self.chat_path(document_id, thread_id), message)
 
-    def chat_history(self, document_id: str, thread_id: str) -> list[dict]:
+    def chat_history(self, document_id: str, thread_id: str, *, limit: int | None = 200) -> list[dict]:
         path = self.chat_path(document_id, thread_id)
         if not self.runtime_exists(path):
             return []
         messages = []
-        for line in self.read_runtime_text(path).splitlines()[-200:]:
+        lines = self.read_runtime_text(path).splitlines()
+        for line in (lines[-limit:] if limit else lines):
             try:
                 message = json.loads(line)
                 if message.get("role") == "assistant" and not message.get("visual_html"):
@@ -3285,6 +3465,40 @@ PDF 文本提取对公式和符号不可靠。{visual_math_instruction}
             except json.JSONDecodeError:
                 continue
         return messages
+
+    def pdf_questions(self, document_id: str) -> dict:
+        """Derive page links from transcripts, without changing historical messages."""
+        self.document_path(document_id)
+        items = []
+        for thread in self.document_threads(document_id)["threads"]:
+            for message in self.chat_history(document_id, thread["id"], limit=None):
+                if message.get("role") != "user":
+                    continue
+                attached = message.get("pdf_contexts")
+                if attached is None:
+                    attached = [message.get("pdf_context")]
+                pages = []
+                for entry in attached if isinstance(attached, list) else []:
+                    if isinstance(entry, dict):
+                        pages.append({**entry, "relation": "attached"})
+                unique = {}
+                for entry in pages:
+                    source_id, page = entry.get("source_id"), entry.get("page")
+                    if (isinstance(source_id, str) and re.fullmatch(r"[A-Za-z0-9._-]{1,128}", source_id)
+                            and type(page) is int and page > 0):
+                        unique.setdefault((source_id, page), entry)
+                if not message.get("id") or not str(message.get("content", "")).strip():
+                    continue
+                for entry in unique.values():
+                    items.append({
+                        "source_id": entry["source_id"], "page": entry["page"],
+                        "relation": entry["relation"], "thread_id": thread["id"],
+                        "thread_title": thread.get("title") or "历史对话",
+                        "archived": thread.get("status") == "archived",
+                        "message_id": message["id"], "question": str(message["content"]),
+                        "created_at": message.get("created_at", ""),
+                    })
+        return {"items": sorted(items, key=lambda item: item["created_at"], reverse=True)}
 
     def sessions(self) -> dict:
         return self.load_runtime_json(self.sessions_path, {})
@@ -3356,11 +3570,6 @@ PDF 文本提取对公式和符号不可靠。{visual_math_instruction}
         self.document_path(document_id)
         with self.lock:
             saved = self.document_threads(document_id)
-            active_id = saved.get("active_thread_id")
-            for thread in saved["threads"]:
-                if thread["id"] == active_id and thread.get("status") != "archived":
-                    thread["status"] = "archived"
-                    thread["archived_at"] = now_iso()
             thread_id = str(uuid.uuid4())
             thread = {
                 "id": thread_id,
@@ -3492,6 +3701,8 @@ PDF 文本提取对公式和符号不可靠。{visual_math_instruction}
         model: str | None = None,
         reasoning_effort: str | None = None,
         ephemeral: bool = False,
+        progress_job_id: str | None = None,
+        timeout: float = 900,
     ) -> tuple[str, str]:
         if ephemeral and session_id:
             raise ValueError("Ephemeral Codex calls cannot resume a session")
@@ -3505,15 +3716,12 @@ PDF 文本提取对公式和符号不可靠。{visual_math_instruction}
             common = [
                 "--json",
                 "--skip-git-repo-check",
-                "-c",
-                'approval_policy="never"',
-                "-c",
-                'sandbox_mode="read-only"',
-                "-c",
-                'network_access="enabled"',
+                "--dangerously-bypass-approvals-and-sandbox",
             ]
             if model:
                 common.extend(["-m", model])
+            if schema and schema.name in {"paper-exploration.schema.json", "document-revision.schema.json"}:
+                common.extend(["-c", 'web_search="live"'])
             if reasoning_effort:
                 common.extend(["-c", f'model_reasoning_effort="{reasoning_effort}"'])
             if session_id:
@@ -3528,8 +3736,6 @@ PDF 文本提取对公式和符号不可靠。{visual_math_instruction}
                     self.codex_bin,
                     "exec",
                     *(["--ephemeral"] if ephemeral else []),
-                    "--sandbox",
-                    "read-only",
                     *common,
                     "-C",
                     str(self.task_dir),
@@ -3539,40 +3745,264 @@ PDF 文本提取对公式和符号不可靠。{visual_math_instruction}
                 if schema:
                     command.extend(["--output-schema", str(schema)])
                 command.extend(["-o", str(output_path), "-"])
-            try:
-                result = subprocess.run(
-                    command,
-                    input=prompt,
-                    text=True,
-                    capture_output=True,
-                    timeout=900,
-                    env=os.environ.copy(),
-                    check=False,
-                )
-            except subprocess.TimeoutExpired as error:
-                raise ApiError(HTTPStatus.GATEWAY_TIMEOUT, "Codex 响应超时") from error
-            if len(result.stdout) > MAX_CODEX_OUTPUT:
-                raise ApiError(HTTPStatus.BAD_GATEWAY, "Codex 事件输出过大")
+            self.update_codex_progress(progress_job_id, "starting", "正在启动 Codex…")
+            result = self.stream_codex(command, prompt, progress_job_id, timeout=timeout)
             if result.returncode != 0 or not output_path.is_file():
                 print("Codex error:", result.stderr[-2000:], flush=True)
                 raise ApiError(HTTPStatus.BAD_GATEWAY, self.codex_failure_message(result.stderr))
+            output = result.stdout
             answer = output_path.read_text(encoding="utf-8").strip()
-            resolved_session = self.parse_session_id(result.stdout) or session_id
+            resolved_session = self.parse_session_id(output) or session_id
             if not resolved_session and not ephemeral:
                 raise ApiError(HTTPStatus.BAD_GATEWAY, "未能取得 Codex Session ID")
             return answer, resolved_session or ""
 
+    def stream_codex(self, command: list[str], prompt: str, job_id: str | None,
+                     timeout: float = 900) -> subprocess.CompletedProcess:
+        """Drain both pipes without blocking on partial lines or a silent child."""
+        with tempfile.TemporaryFile() as stdin, selectors.DefaultSelector() as selector:
+            stdin.write(prompt.encode("utf-8"))
+            stdin.seek(0)
+            try:
+                process = subprocess.Popen(command, stdin=stdin, stdout=subprocess.PIPE,
+                                           stderr=subprocess.PIPE, start_new_session=True,
+                                           env=os.environ.copy())
+            except OSError as error:
+                raise ApiError(HTTPStatus.BAD_GATEWAY, "无法启动 Codex 进程") from error
+            output, pending, diagnostics = bytearray(), bytearray(), bytearray()
+            deadline = time.monotonic() + timeout
+            try:
+                for pipe in (process.stdout, process.stderr):
+                    os.set_blocking(pipe.fileno(), False)
+                    selector.register(pipe, selectors.EVENT_READ)
+                while selector.get_map() or process.poll() is None:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        progress = self.codex_progress_state(job_id) if job_id else {}
+                        print(f"Codex timeout after {timeout:.0f}s: job={job_id or 'none'}, "
+                              f"stage={progress.get('stage', 'unknown')}, events={progress.get('events', 0)}, "
+                              f"stdout_bytes={len(output)}, stderr_bytes={len(diagnostics)}", flush=True)
+                        raise ApiError(HTTPStatus.GATEWAY_TIMEOUT,
+                                       "模型响应超时，未生成最终结果。请重试本轮问题，或调整推理强度。")
+                    for key, _ in selector.select(timeout=min(0.25, remaining)):
+                        chunk = os.read(key.fileobj.fileno(), 65536)
+                        if not chunk:
+                            selector.unregister(key.fileobj)
+                            continue
+                        if key.fileobj is process.stderr:
+                            diagnostics.extend(chunk)
+                            del diagnostics[:-4000]
+                            continue
+                        if len(output) + len(chunk) > MAX_CODEX_OUTPUT:
+                            raise ApiError(HTTPStatus.BAD_GATEWAY, "Codex 事件输出过大")
+                        output.extend(chunk)
+                        pending.extend(chunk)
+                        while b"\n" in pending:
+                            line, _, rest = pending.partition(b"\n")
+                            pending = bytearray(rest)
+                            self.codex_progress_event(job_id, line.decode("utf-8", errors="replace"))
+                if pending:
+                    self.codex_progress_event(job_id, pending.decode("utf-8", errors="replace"))
+                return subprocess.CompletedProcess(command, process.wait(),
+                    output.decode("utf-8", errors="replace"), diagnostics.decode("utf-8", errors="replace"))
+            finally:
+                # Also terminate descendants holding pipes open on timeout/output overflow.
+                with contextlib.suppress(ProcessLookupError):
+                    os.killpg(process.pid, signal.SIGKILL)
+                process.wait()
+                process.stdout.close()
+                process.stderr.close()
+
+    def begin_codex_progress(self, job_id: str | None) -> None:
+        if not job_id:
+            return
+        if not re.fullmatch(r"[0-9a-fA-F-]{16,64}", job_id):
+            raise ApiError(HTTPStatus.BAD_REQUEST, "问答任务标识无效")
+        with self.lock:
+            now = time.monotonic()
+            self.codex_progress = {key: value for key, value in self.codex_progress.items()
+                if value["status"] == "running" or now - value["changed"] < 600}
+            if job_id in self.codex_progress:
+                raise ApiError(HTTPStatus.CONFLICT, "问答任务标识已使用")
+            if len(self.codex_progress) >= 128:
+                terminal = next((key for key, value in self.codex_progress.items()
+                                 if value["status"] != "running"), None)
+                if terminal:
+                    del self.codex_progress[terminal]
+                else:
+                    raise ApiError(HTTPStatus.SERVICE_UNAVAILABLE, "问答任务过多，请稍后重试")
+            self.codex_progress[job_id] = {
+                "job_id": job_id, "status": "running", "stage": "preparing",
+                "message": "正在准备论文上下文…", "events": 0,
+                "started": now, "changed": now, "last_event": None,
+            }
+
+    def update_codex_progress(self, job_id: str | None, stage: str, message: str,
+                              *, event: bool = False) -> None:
+        if not job_id:
+            return
+        with self.lock:
+            current = self.codex_progress.get(job_id)
+            if current and current["status"] == "running":
+                current.update(stage=stage, message=message, changed=time.monotonic())
+                if event:
+                    current["events"] += 1
+                    current["last_event"] = current["changed"]
+
+    def codex_progress_event(self, job_id: str | None, line: str) -> None:
+        if not job_id:
+            return
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            return
+        if not isinstance(event, dict) or not isinstance(event.get("type"), str):
+            return
+        event_type = event["type"]
+        item = event.get("item") if isinstance(event.get("item"), dict) else {}
+        item_type = item.get("type")
+        stage, message = "working", "收到 Codex 活动，等待下一步…"
+        if event_type in {"thread.started", "turn.started"}:
+            stage, message = "analyzing", "Codex 已开始处理问题…"
+        elif item_type == "command_execution":
+            command = str(item.get("command", ""))
+            stage, message = "tool", "正在执行工具…"
+            if re.search(r"(?<![\w/-])(rg|grep)(?=\s)", command):
+                stage, message = "searching", "正在执行文本检索…"
+            elif re.search(r"(?<![\w/-])(cat|sed|head|tail)(?=\s)", command):
+                stage, message = "reading", "正在读取文本内容…"
+            if event_type == "item.completed":
+                message = "工具执行结束，等待下一步…"
+                if item.get("exit_code") not in (None, 0):
+                    message = "工具返回非零状态，等待 Codex 后续处理…"
+        elif item_type == "web_search":
+            stage, message = "searching", "正在进行网络检索…"
+            if event_type == "item.completed":
+                message = "网络检索结束，等待后续处理…"
+        elif item_type == "mcp_tool_call":
+            stage, message = "tool", "正在调用外部工具…"
+            if event_type == "item.completed":
+                message = "外部工具调用结束，等待后续处理…"
+        elif item_type == "reasoning":
+            stage, message = "analyzing", "Codex 正在分析…"
+        elif item_type == "agent_message":
+            stage, message = "responding", "收到 Codex 文字输出，继续处理中…"
+        elif event_type == "turn.completed":
+            stage, message = "validating", "Codex 输出完成，正在校验回答与引用…"
+        elif event_type in {"error", "turn.failed"}:
+            stage, message = "working", "Codex 报告异常，等待处理结果…"
+        self.update_codex_progress(job_id, stage, message, event=True)
+
+    def finish_codex_progress(self, job_id: str | None, *, error: str = "") -> None:
+        if not job_id:
+            return
+        with self.lock:
+            current = self.codex_progress.get(job_id)
+            if current is not None:
+                current.update(status="failed" if error else "completed",
+                    stage="failed" if error else "completed",
+                    message=(f"本轮失败：{error}" if error != "failed" else "本轮问答失败，请查看错误提示。")
+                            if error else "回答已生成。",
+                    changed=time.monotonic())
+
+    def codex_progress_state(self, job_id: str) -> dict:
+        if not re.fullmatch(r"[0-9a-fA-F-]{16,64}", job_id):
+            raise ApiError(HTTPStatus.BAD_REQUEST, "问答任务标识无效")
+        with self.lock:
+            current = self.codex_progress.get(job_id)
+            if not current:
+                return {"job_id": job_id, "status": "unknown", "message": ""}
+            now = time.monotonic()
+            return {**{key: current[key] for key in ("job_id", "status", "stage", "message", "events")},
+                    "elapsed_seconds": int((now if current["status"] == "running" else current["changed"]) - current["started"]),
+                    "last_event_seconds": None if current["last_event"] is None else int(now - current["last_event"])}
+
+    def exploration_corpus(self, source_id: str) -> tuple[Path, list[str]]:
+        with self.lock:
+            extraction_lock = self.exploration_locks.setdefault(source_id, threading.Lock())
+        with extraction_lock:
+            return self._extract_exploration_corpus(source_id)
+
+    def _extract_exploration_corpus(self, source_id: str) -> tuple[Path, list[str]]:
+        pdf = self.source_pdf(source_id)
+        directory = self.user_dir / "paper-exploration" / self.file_sha256(pdf)
+        directory.mkdir(parents=True, exist_ok=True)
+        # Keep the JSON cache outside the searchable directory: one JSON line
+        # otherwise makes rg return the entire paper alongside page matches.
+        corpus = directory.parent / f"{directory.name}.json"
+        legacy_corpus = directory / "pages.json"
+        if legacy_corpus.is_file():
+            legacy_corpus.replace(corpus)
+        if corpus.is_file():
+            return directory, json.loads(corpus.read_text(encoding="utf-8"))
+        try:
+            extracted = subprocess.run([self.pdftotext_bin, "-layout", str(pdf), "-"],
+                                       capture_output=True, text=True, timeout=120, check=False)
+        except subprocess.TimeoutExpired as error:
+            raise ApiError(HTTPStatus.GATEWAY_TIMEOUT, "全文提取超时，请重试") from error
+        if extracted.returncode:
+            raise ApiError(HTTPStatus.BAD_GATEWAY, "无法提取论文全文")
+        pages = extracted.stdout.split("\f")
+        if pages and not pages[-1].strip():
+            pages.pop()
+        if len(pages) != self.pdf_page_count(pdf) or not any(page.strip() for page in pages):
+            raise ApiError(HTTPStatus.BAD_REQUEST, "这份 PDF 暂无可靠的分页文本，需要先进行 OCR")
+        for number, page in enumerate(pages, 1):
+            self._atomic_text(directory / f"page-{number:04d}.txt", page)
+        self._atomic_text(corpus, json.dumps(pages, ensure_ascii=False))
+        return directory, pages
+
+    @staticmethod
+    def exploration_citations(value, source_id: str, pages: list[str]) -> list[dict]:
+        citations = []
+        for index, item in enumerate(value if isinstance(value, list) else [], 1):
+            if not isinstance(item, dict):
+                continue
+            page, quote = item.get("page"), item.get("quote", "")
+            if type(page) is not int or not 1 <= page <= len(pages) or not isinstance(quote, str):
+                continue
+            normalized = " ".join(quote.split())
+            if len(normalized) < 12 or normalized not in " ".join(pages[page - 1].split()):
+                continue
+            citations.append({"number": index, "source_id": source_id, "page": page, "quote": quote[:2000],
+                              "label": str(item.get("label", "原文证据"))[:160],
+                              "locator": str(item.get("locator") or "")[:80]})
+        return citations[:40]
+
     def ask(self, payload: dict) -> dict:
+        progress_job_id = str(payload.get("progress_job_id", "")).strip() or None
+        self.begin_codex_progress(progress_job_id)
+        try:
+            result = self._ask(payload, progress_job_id)
+        except Exception:
+            self.finish_codex_progress(progress_job_id, error="failed")
+            raise
+        self.finish_codex_progress(progress_job_id)
+        return result
+
+    def _ask(self, payload: dict, progress_job_id: str | None) -> dict:
         document_id = str(payload.get("document_id", ""))
         sha256 = str(payload.get("document_sha256", ""))
         document_path = self.document_path(document_id)
+        mode = payload.get("mode", "explore")
+        if mode not in {"question", "explore"}:
+            raise ApiError(HTTPStatus.BAD_REQUEST, "未知问答模式")
+        mode = "explore"  # Legacy question clients use the same full-paper workflow.
+        exploration = True
+        exploration_source = ""
+        exploration_pages = []
+        if exploration:
+            exploration_source = str(payload.get("exploration_source", ""))
+            if not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", exploration_source):
+                raise ApiError(HTTPStatus.BAD_REQUEST, "请先打开要提问的论文 PDF")
+            exploration_directory, exploration_pages = self.exploration_corpus(exploration_source)
         saved_settings = self.knowledge_settings(document_id)
         requested_model = str(payload.get("model", saved_settings["model"]))
         requested_effort = str(
             payload.get("effort", payload.get("reasoning_effort", saved_settings["effort"]))
         )
         if requested_model not in REVISION_MODELS or requested_effort not in model_reasoning_efforts(requested_model):
-            raise ApiError(HTTPStatus.BAD_REQUEST, "知识问答模型配置无效")
+            raise ApiError(HTTPStatus.BAD_REQUEST, "论文问答模型配置无效")
         question = str(payload.get("question", "")).strip()
         if not question or len(question) > MAX_QUESTION:
             raise ApiError(HTTPStatus.BAD_REQUEST, "问题为空或过长")
@@ -3630,7 +4060,7 @@ PDF 文本提取对公式和符号不可靠。{visual_math_instruction}
             ensure_ascii=False,
             indent=2,
         )
-        prompt = rf"""你是本地研究阅读器中的知识问答助手。
+        prompt = rf"""你是本地研究阅读器中的论文问答助手。
 
 以下固定阅读上下文由本地后端从只读任务目录生成；浏览器不能自由指定文件路径或篡改这些字段：
 <fixed_reader_context>
@@ -3674,6 +4104,22 @@ GPT-4 技术报告优先级：
 用户问题：
 {question}
 """
+        if exploration:
+            prompt += f"""
+
+本轮为论文问答，以下全文研究和引用要求优先。
+目标论文 source_id: {exploration_source}
+本地原始 PDF: {self.source_pdf(exploration_source)}
+完整分页文本目录: {exploration_directory}
+共 {len(exploration_pages)} 个 PDF 物理页；page-0001.txt 对应 PDF 第 1 页，不是印刷页码。
+不要一次输出整个目录的文本。先用 rg --glob 'page-*.txt' 等工具在上述目录搜索术语及同义词，再按需读取匹配页、相邻页、目录、实验、局限性和附录。优先 rg -l 获取候选页，再读取相关片段，避免搜索结果过长。
+本轮全文检索限定目标论文，勿递归搜索整个 sources、papers 或缓存目录；需要外部补充时单独查证来源。必须实际调用读取工具，不能只凭已有知识回答。
+用户可以有多个问题或零散想法，请逐项解释：直接讨论/间接相关/暂未找到；涉及章节、方案、公式或实验、结论边界，以及对用户想法的回应。
+未找到时列出搜索词和查阅范围，不可据此断言全文不存在。空白或乱码页明确指出无法核验，需要时查看原 PDF。
+可使用网络搜索补充，优先使用可用的 web_search 搜索工具；shell 的代理或网络失败不等于搜索工具不可用。清楚区分本论文证据、外部来源（直接 URL）和你的推断；所有联网途径均不可用时如实说明，不要假装联网，也不要修改代理配置。
+输出 JSON 除 content、visualization、visual_html 外，增加 citations 数组，每项包含 page（物理页整数）、quote（从该页逐字复制的连续原文，至少12字符）、label（问题编号及章节/表格等简短说明）、locator（原文明确标注的公式号/章节号/图表号，例如 Eq. (15)、Section 3.3、Table 2；无编号填空字符串，不得猜测）。引用公式时同时说明公式编号和含义，quote 优先引用公式附近可连续复制的解释段落，用于准确框选；不要把 LaTeX 重写当作逐字原文。段落引用选择支持结论的完整句子，避免跨栏跨段拼接。
+content 中按问题组织详细说明，用 [证据1] 等对应 citations 顺序。结论必须有原文依据，外部补充不能冒充论文内容。最后简述实际查阅范围。无本地证据时 citations 为空。
+"""
         with self.lock:
             saved_threads = self.document_threads(document_id)
             thread_id = str(payload.get("thread_id", "") or saved_threads.get("active_thread_id") or "")
@@ -3685,14 +4131,18 @@ GPT-4 技术报告优先级：
 
         # Keep prompts in one Codex session ordered, but never hold the global
         # persistence lock while waiting for an external model response.
+        self.update_codex_progress(progress_job_id, "queued", "等待当前对话的前一轮任务…")
         with request_lock:
+            self.update_codex_progress(progress_job_id, "preparing", "正在准备本轮问题与页面附件…")
             with self.lock:
                 saved_threads = self.document_threads(document_id)
                 thread = next((item for item in saved_threads["threads"] if item["id"] == thread_id), None)
                 if not thread:
                     raise ApiError(HTTPStatus.NOT_FOUND, "当前对话不存在")
-                if thread_id != saved_threads.get("active_thread_id") or thread.get("status") == "archived":
+                if thread.get("status") == "archived":
                     raise ApiError(HTTPStatus.CONFLICT, "该对话已归档，请新建对话后继续提问")
+                saved_threads["active_thread_id"] = thread_id
+                self.save_document_threads(document_id, saved_threads)
                 session_id = (
                     thread.get("session_id")
                     if thread.get("context_policy") == KNOWLEDGE_CONTEXT_POLICY
@@ -3701,6 +4151,8 @@ GPT-4 技术报告优先级：
                 user_message = {
                     "id": str(uuid.uuid4()),
                     "role": "user",
+                    "mode": mode,
+                    "exploration_source": exploration_source,
                     "content": question,
                     "contexts": contexts,
                     "pdf_contexts": pdf_contexts,
@@ -3711,13 +4163,20 @@ GPT-4 技术报告优先级：
                 }
                 self.append_chat(document_id, thread_id, user_message)
             try:
+                history = self.chat_history(document_id, thread_id, limit=12)
+                if exploration or any(item.get("mode") == "explore" for item in history):
+                    prompt += "\n先前对话仅供理解追问，不是论文证据：\n" + json.dumps(
+                        [{"role": item.get("role"), "content": str(item.get("content", ""))[:5000]}
+                         for item in history[:-1]], ensure_ascii=False)
                 answer, resolved_session = self.run_codex(
                     prompt,
-                    session_id,
-                    schema=READER_DIR / "schemas" / "knowledge-answer.schema.json",
+                    None if exploration else session_id,
+                    schema=READER_DIR / "schemas" / ("paper-exploration.schema.json" if exploration else "knowledge-answer.schema.json"),
+                    ephemeral=exploration,
                     pdf_contexts=pdf_contexts,
                     model=settings["model"],
                     reasoning_effort=settings["effort"],
+                    progress_job_id=progress_job_id,
                 )
             except ApiError:
                 with self.lock:
@@ -3727,10 +4186,17 @@ GPT-4 技术报告优先级：
                         {"id": str(uuid.uuid4()), "role": "system", "content": "本轮 Codex 调用失败", "created_at": now_iso()},
                     )
                 raise
-            result = self.validate_knowledge_result(self.parse_knowledge_json(answer))
+            self.update_codex_progress(progress_job_id, "validating", "正在校验回答格式与原文引用…")
+            raw_result = self.parse_knowledge_json(answer)
+            result = self.validate_knowledge_result(raw_result)
+            citations = self.exploration_citations(raw_result.get("citations"), exploration_source, exploration_pages) if exploration else []
+            if exploration and (not isinstance(raw_result.get("citations"), list) or len(citations) != len(raw_result["citations"])):
+                result["content"] += "\n\n注意：部分引用未通过原文核对，已隐藏其跳转入口，请勿将其作为已核验依据。"
             assistant_message = {
                 "id": str(uuid.uuid4()),
                 "role": "assistant",
+                "mode": mode,
+                "citations": citations,
                 "content": result["content"],
                 "visualization": result["visualization"],
                 "visual_html": result["visual_html"],
@@ -3739,6 +4205,8 @@ GPT-4 技术报告优先级：
                 "created_at": now_iso(),
             }
             with self.lock:
+                if exploration:
+                    resolved_session = session_id
                 self.save_session(
                     document_id,
                     thread_id,
@@ -3762,7 +4230,7 @@ GPT-4 技术报告优先级：
     def parse_knowledge_json(answer: str) -> object:
         """Parse the structured knowledge response, tolerating a JSON fence."""
         if not isinstance(answer, str):
-            raise ApiError(HTTPStatus.BAD_GATEWAY, "Codex 未返回有效知识问答 JSON")
+            raise ApiError(HTTPStatus.BAD_GATEWAY, "Codex 未返回有效论文问答 JSON")
         value = answer.strip().lstrip("\ufeff")
         fenced = re.fullmatch(r"```(?:json)?\s*\n([\s\S]*?)\n```\s*", value, re.IGNORECASE)
         if fenced:
@@ -3772,16 +4240,16 @@ GPT-4 技术报告优先级：
         except json.JSONDecodeError as error:
             raise ApiError(
                 HTTPStatus.BAD_GATEWAY,
-                f"Codex 返回的知识问答 JSON 无效（第 {error.lineno} 行，第 {error.colno} 列）",
+                f"Codex 返回的论文问答 JSON 无效（第 {error.lineno} 行，第 {error.colno} 列）",
             ) from error
 
     @classmethod
     def validate_knowledge_result(cls, value: object) -> dict:
         if not isinstance(value, dict):
-            raise ApiError(HTTPStatus.BAD_GATEWAY, "知识问答结果格式无效")
+            raise ApiError(HTTPStatus.BAD_GATEWAY, "论文问答结果格式无效")
         content = value.get("content")
         if not isinstance(content, str) or not content.strip() or len(content) > MAX_KNOWLEDGE_CONTENT:
-            raise ApiError(HTTPStatus.BAD_GATEWAY, "知识问答正文为空或过长")
+            raise ApiError(HTTPStatus.BAD_GATEWAY, "论文问答正文为空或过长")
         content = content.strip()
         visualization = cls.validate_visualization(value.get("visualization"))
         visual_html = value.get("visual_html")
@@ -3987,7 +4455,7 @@ GPT-4 技术报告优先级：
     def write_faq_files(self, document_id: str, saved: dict) -> None:
         """Keep the machine-readable FAQ and its readable mirror in sync."""
         self.save_runtime_json(self.faq_path(document_id), saved)
-        markdown = ["# 我的知识问答 FAQ", ""]
+        markdown = ["# 我的论文问答 FAQ", ""]
         for item in saved.get("items", []):
             markdown.extend([f"## {item['question']}", "", item["answer"], ""])
             if item.get("note"):
@@ -4060,7 +4528,7 @@ GPT-4 技术报告优先级：
             )
             return saved
 
-    def page_state(self, document_id: str, selected_thread_id: str = "") -> dict:
+    def page_state(self, document_id: str, selected_thread_id: str = "", message_id: str = "") -> dict:
         self.document_path(document_id)
         saved = self.document_threads(document_id)
         if not saved["threads"]:
@@ -4074,13 +4542,19 @@ GPT-4 技术报告优先级：
         if selected_thread_id and not selected:
             raise ApiError(HTTPStatus.NOT_FOUND, "对话不存在")
         session = selected if selected and selected.get("context_policy") == KNOWLEDGE_CONTEXT_POLICY else None
+        messages = self.chat_history(document_id, selected_thread_id, limit=None if message_id else 200) if selected_thread_id else []
+        if message_id:
+            index = next((i for i, message in enumerate(messages) if message.get("id") == message_id), None)
+            if index is None:
+                raise ApiError(HTTPStatus.NOT_FOUND, "问题不存在或已删除")
+            messages = messages[max(0, index - 50):index + 150]
         return {
             "session": session,
             "active_thread_id": active_thread_id,
             "selected_thread_id": selected_thread_id or None,
             "threads": self.public_threads(document_id, saved),
             "knowledge_context_policy": KNOWLEDGE_CONTEXT_POLICY,
-            "messages": self.chat_history(document_id, selected_thread_id) if selected_thread_id else [],
+            "messages": messages,
             "faq": self.load_runtime_json(
                 self.faq_path(document_id), {"document_id": document_id, "items": []}
             ),
@@ -4109,6 +4583,8 @@ class ReaderHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
+        if self.close_connection:
+            self.send_header("Connection", "close")
         self.end_headers()
         self.wfile.write(body)
 
@@ -4118,10 +4594,15 @@ class ReaderHandler(BaseHTTPRequestHandler):
         if host != self.state.origin.removeprefix("http://") or origin != self.state.origin:
             raise ApiError(HTTPStatus.FORBIDDEN, "请求来源无效")
         if not secrets.compare_digest(self.headers.get("X-Reader-Token", ""), self.state.csrf_token):
-            raise ApiError(HTTPStatus.FORBIDDEN, "请求令牌无效")
+            raise ApiError(HTTPStatus.FORBIDDEN, "请求令牌无效", code="invalid_token")
 
     def read_json(self) -> dict:
-        length = int(self.headers.get("Content-Length", "0"))
+        if self.headers.get("Transfer-Encoding"):
+            raise ApiError(HTTPStatus.BAD_REQUEST, "不支持此请求体编码")
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError as error:
+            raise ApiError(HTTPStatus.BAD_REQUEST, "请求体长度无效") from error
         if length <= 0 or length > MAX_BODY:
             raise ApiError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "请求体大小无效")
         try:
@@ -4145,9 +4626,27 @@ class ReaderHandler(BaseHTTPRequestHandler):
                 query = parse_qs(parsed.query)
                 document_id = query.get("document_id", [""])[0]
                 thread_id = query.get("thread_id", [""])[0]
-                self.send_json(HTTPStatus.OK, self.state.page_state(document_id, thread_id))
+                message_id = query.get("message_id", [""])[0]
+                self.send_json(HTTPStatus.OK, self.state.page_state(document_id, thread_id, message_id))
             except ApiError as error:
                 self.send_json(error.status, {"error": error.message})
+            return
+        if parsed.path in {"/api/ask/progress", "/api/revision/progress"}:
+            try:
+                job_id = parse_qs(parsed.query).get("job_id", [""])[0]
+                self.send_json(HTTPStatus.OK, self.state.codex_progress_state(job_id))
+            except ApiError as error:
+                self.send_json(error.status, {"error": error.message})
+            return
+        if parsed.path == "/api/pdf/questions":
+            try:
+                query = parse_qs(parsed.query)
+                self.send_json(HTTPStatus.OK, self.state.pdf_questions(query.get("document_id", [""])[0]))
+            except ApiError as error:
+                self.send_json(error.status, {"error": error.message})
+            return
+        if parsed.path == "/api/document-importance":
+            self.send_json(HTTPStatus.OK, self.state.document_importance())
             return
         if parsed.path == "/api/reading-progress":
             try:
@@ -4206,9 +4705,13 @@ class ReaderHandler(BaseHTTPRequestHandler):
             self.send_error(HTTPStatus.NOT_FOUND)
 
     def do_POST(self) -> None:
+        keep_alive = not self.close_connection
+        # Rejected requests may leave an unread body on the HTTP/1.1 connection.
+        self.close_connection = True
         try:
             self.validate_request()
             payload = self.read_json()
+            self.close_connection = not keep_alive
             path = urlparse(self.path).path
             if path == "/api/ask":
                 result = self.state.ask(payload)
@@ -4240,6 +4743,8 @@ class ReaderHandler(BaseHTTPRequestHandler):
                 result = self.state.delete_faq(payload)
             elif path == "/api/reading-progress":
                 result = self.state.save_reading_progress(payload)
+            elif path == "/api/document-importance":
+                result = self.state.save_document_importance(payload)
             elif path == "/api/pdf/page-insight":
                 result = self.state.generate_page_insight(payload)
             elif path == "/api/translation/page":
@@ -4252,7 +4757,10 @@ class ReaderHandler(BaseHTTPRequestHandler):
                 raise ApiError(HTTPStatus.NOT_FOUND, "API 不存在")
             self.send_json(HTTPStatus.OK, result)
         except ApiError as error:
-            self.send_json(error.status, {"error": error.message})
+            self.send_json(error.status, {
+                "error": error.message,
+                **({"code": error.code} if error.code else {}),
+            })
         except Exception as error:
             print("Unhandled API error:", repr(error), flush=True)
             self.send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "本地服务内部错误"})
@@ -4267,7 +4775,7 @@ def main() -> None:
     server = ThreadingHTTPServer(("127.0.0.1", args.port), ReaderHandler)
     server.state = state
     print(f"Research reader serving on {state.origin}", flush=True)
-    print("Codex knowledge sessions, ephemeral AI revisions, and stateless PDF translation are enabled; original task files remain read-only.", flush=True)
+    print("Codex knowledge sessions and ephemeral AI revisions use unrestricted command execution; stateless PDF translation is enabled.", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

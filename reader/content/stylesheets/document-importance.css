@@ -1,0 +1,82 @@
+.reader-importance-toolbar {
+  margin: .4rem .6rem .7rem;
+  padding: .5rem;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: .4rem;
+  background: var(--md-code-bg-color);
+}
+.reader-importance-toolbar label { display: block; margin-bottom: .3rem; font-size: .65rem; font-weight: 650; }
+.reader-importance-toolbar select {
+  width: 100%;
+  padding: .3rem .2rem;
+  border: 1px solid var(--md-default-fg-color--lighter);
+  border-radius: .2rem;
+  background: var(--md-default-bg-color);
+  color: var(--md-default-fg-color);
+  font: inherit;
+  font-size: .65rem;
+  cursor: pointer;
+}
+.reader-importance-toolbar p { margin: .35rem 0 0; font-size: .58rem; line-height: 1.5; color: var(--md-default-fg-color--light); }
+.reader-importance-toolbar button { color: var(--md-accent-fg-color); cursor: pointer; }
+.reader-importance-item { position: relative; }
+.reader-importance-item > .md-nav__link { padding-left: 1.95rem; min-height: 1.3rem; }
+.reader-importance-button {
+  position: absolute;
+  top: .08rem;
+  left: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.8rem;
+  height: 1.3rem;
+  border-radius: .25rem;
+  color: var(--md-default-fg-color--light);
+  font-size: .62rem;
+  line-height: 1;
+  font-weight: 600;
+  cursor: pointer;
+}
+.reader-importance-button[data-score="0"] { font-size: .9rem; font-weight: 400; }
+.reader-importance-button[data-score="3"] { color: var(--md-primary-fg-color); background: color-mix(in srgb, var(--md-primary-fg-color) 9%, transparent); }
+.reader-importance-button[data-score="4"], .reader-importance-button[data-score="5"] { color: #8b5700; background: #fff0cb; }
+[data-md-color-scheme="slate"] .reader-importance-button[data-score="3"] { color: #b8c4ff; }
+[data-md-color-scheme="slate"] .reader-importance-button[data-score="4"], [data-md-color-scheme="slate"] .reader-importance-button[data-score="5"] { color: #ffd478; background: #59441e; }
+.reader-importance-button:hover { background: var(--md-default-fg-color--lightest); }
+.reader-importance-button:disabled { opacity: .5; cursor: wait; }
+.reader-importance-hidden { display: none !important; }
+.reader-importance-dialog {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  width: 16rem;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow: auto;
+  padding: .8rem;
+  border: 1px solid var(--md-default-fg-color--lighter);
+  border-radius: .55rem;
+  background: var(--md-default-bg-color);
+  color: var(--md-default-fg-color);
+  box-shadow: 0 .3rem 1.5rem #0003;
+  font-size: .7rem;
+}
+.reader-importance-dialog::backdrop { background: #0001; }
+.reader-importance-dialog__header { display: flex; align-items: center; justify-content: space-between; }
+.reader-importance-dialog__header button { font-size: 1rem; padding: 0 .3rem; cursor: pointer; }
+.reader-importance-dialog__document { margin: .5rem 0; font-weight: 600; }
+.reader-importance-dialog__hint, .reader-importance-dialog [data-result] { font-size: .6rem; color: var(--md-default-fg-color--light); }
+.reader-importance-dialog__scores { display: flex; gap: .3rem; margin: .7rem 0; }
+.reader-importance-dialog__scores button {
+  flex: 1;
+  min-height: 1.9rem;
+  border: 1px solid var(--md-default-fg-color--lighter);
+  border-radius: .3rem;
+  cursor: pointer;
+}
+.reader-importance-dialog__scores button[aria-pressed="true"], .reader-importance-dialog__scores button:hover { border-color: var(--md-accent-fg-color); color: var(--md-accent-fg-color); background: color-mix(in srgb, var(--md-accent-fg-color) 8%, transparent); }
+.reader-importance-dialog [data-clear] { padding: .2rem 0; color: var(--md-default-fg-color--light); cursor: pointer; }
+.reader-importance-dialog button:disabled { opacity: .5; cursor: wait; }
+.reader-importance-dialog [data-result]:empty { display: none; }
+.reader-importance-button:focus-visible, .reader-importance-toolbar :focus-visible, .reader-importance-dialog button:focus-visible { outline: 2px solid var(--md-accent-fg-color); outline-offset: 2px; }
+@media print { .reader-importance-toolbar, .reader-importance-button, .reader-importance-dialog { display: none !important; } }

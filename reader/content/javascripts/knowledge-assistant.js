@@ -1,6 +1,10 @@
 (function () {
   "use strict";
 
+  const supportedModels = ["gpt-6.1-sol", "gpt-6-astra"];
+  const defaultModel = supportedModels[0];
+  const modelOptions = supportedModels.map(model => `<option value="${model}">${model}</option>`).join("");
+
   let token;
   let taskId;
   let documentId;
@@ -31,13 +35,19 @@
   let pdfContexts = [];
   let pendingFaq = null;
   let revisions = [];
-  let revisionSettings = { model: "gpt-5.6-terra", effort: "medium" };
-  let knowledgeSettings = { model: "gpt-5.6-terra", effort: "medium" };
+  let revisionSettings = { model: defaultModel, effort: "medium" };
+  let knowledgeSettings = { model: defaultModel, effort: "medium" };
   let knowledgeSettingsSave = Promise.resolve();
   let knowledgeSettingsVersion = 0;
   let knowledgeSettingsTouched = false;
   let revisionDiscussions = [];
   let shouldRevealLatestMessage = false;
+  let questionBusy = false;
+  let pageQuestions = [];
+  let pageQuestionsLoaded = false;
+  let pageQuestionsError = "";
+  let pageQuestionsRequest = 0;
+  let openingQuestion = false;
   let initializedPanel = null;
   let markdownParser = null;
   let mathTypesetQueue = Promise.resolve();
@@ -60,29 +70,78 @@
   }
 
   function switchTab(name) {
-    const panel = document.querySelector(".evidence-panel");
-    document.querySelectorAll(".evidence-panel__tab").forEach(tab => {
-      tab.classList.toggle("is-active", tab.dataset.readerTab === name);
-    });
-    document.querySelectorAll(".evidence-panel__pane").forEach(pane => {
-      pane.classList.toggle("is-active", pane.dataset.readerPane === name);
-    });
-    document.body.classList.add("evidence-panel-open");
-    if (panel) panel.dataset.readerActivePane = name;
-    if (name === "assistant") {
-      // MathJax cannot measure formulas while the assistant pane is display:none.
-      // Re-typeset after the pane is visible so hidden answers do not retain a
-      // zero-width container and wrap one symbol per line.
-      requestAnimationFrame(() => {
-        typesetVisibleMessages();
-        revealLatestMessage();
-      });
-    } else if (name === "faq") {
-      requestAnimationFrame(() => {
-        faqPane?.querySelectorAll(".knowledge-rich-text").forEach(typesetMessage);
-      });
-    }
+    window.dispatchEvent(new CustomEvent("reader:set-pane", { detail: { name } }));
   }
+
+  function publishPageQuestions() {
+    const frame = document.querySelector(".evidence-panel__frame");
+    if (!frame?.contentWindow || !currentPdfContext) return;
+    frame.contentWindow.postMessage({ type: "reader:pdf-questions",
+      source_id: currentPdfContext.source_id, items: pageQuestions,
+      loaded: pageQuestionsLoaded, error: pageQuestionsError, busy: questionBusy || openingQuestion }, location.origin);
+  }
+
+  async function refreshPageQuestions() {
+    const requestedDocument = documentId;
+    const request = ++pageQuestionsRequest;
+    if (!requestedDocument) return;
+    try {
+      const result = await api(`/api/pdf/questions?${new URLSearchParams({ document_id: requestedDocument })}`, { method: "GET" });
+      if (requestedDocument !== documentId || request !== pageQuestionsRequest) return;
+      pageQuestions = result.items || [];
+      pageQuestionsLoaded = true;
+      pageQuestionsError = "";
+    } catch (error) {
+      if (requestedDocument !== documentId || request !== pageQuestionsRequest) return;
+      pageQuestionsError = "历史问题加载失败；重新打开页面可重试。";
+    }
+    publishPageQuestions();
+  }
+
+  window.addEventListener("message", async event => {
+    const frame = document.querySelector(".evidence-panel__frame");
+    if (event.origin !== location.origin || event.source !== frame?.contentWindow) return;
+    if (event.data?.type === "reader:pdf-questions-ready") { publishPageQuestions(); return; }
+    if (event.data?.type !== "reader:open-question" || questionBusy || openingQuestion) return;
+    const target = pageQuestions.find(item => item.thread_id === event.data.thread_id
+      && item.message_id === event.data.message_id && item.source_id === event.data.source_id && item.page === event.data.page);
+    if (!target) return;
+    openingQuestion = true;
+    publishPageQuestions();
+    try {
+      await loadState(target.thread_id, target.message_id);
+      if (selectedThreadId !== target.thread_id) return;
+      shouldRevealLatestMessage = false;
+      switchTab("assistant");
+      const message = messageList.querySelector(`[data-message-id="${CSS.escape(target.message_id)}"]`);
+      if (message) {
+        messageList.querySelectorAll(".is-question-target").forEach(item => item.classList.remove("is-question-target"));
+        message.classList.add("is-question-target");
+        message.tabIndex = -1;
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          message.focus({ preventScroll: true });
+          revealMessage(message);
+        }));
+      }
+    } catch (error) {
+      switchTab("assistant");
+      sessionLabel.textContent = error.message;
+      refreshPageQuestions();
+    } finally {
+      openingQuestion = false;
+      publishPageQuestions();
+    }
+  });
+
+  window.addEventListener("reader:pane-change", event => {
+    if (event.detail?.name === "assistant") requestAnimationFrame(() => {
+      typesetVisibleMessages();
+      revealLatestMessage();
+    });
+    if (event.detail?.name === "faq") requestAnimationFrame(() => {
+      faqPane?.querySelectorAll(".knowledge-rich-text").forEach(typesetMessage);
+    });
+  });
 
   function createUi() {
     const panel = document.querySelector(".evidence-panel");
@@ -92,22 +151,27 @@
     faqPane = panel.querySelector('[data-reader-pane="faq"]');
     assistantPane.innerHTML = [
       '<section class="knowledge-assistant">',
-      '  <div class="knowledge-threadbar" title="知识问答只读取原始调研 Markdown 和主动附加的原始 PDF；手动修改、AI 修订与补充图解不会进入对话上下文。">',
+      '<div class="knowledge-controls">',
+      '<strong class="knowledge-mode">论文问答</strong>',
+      '      <details class="knowledge-options"><summary title="模式说明与模型设置">设置</summary><div class="knowledge-options-popover"><p class="knowledge-mode-hint">按需检索当前论文全文与附录，解释概念、公式和思路；可附加选区或页面图像，需要时核验外部来源。</p><div class="knowledge-model-settings">',
+      `        <label><span>模型名称</span><select data-setting="knowledge-model" aria-label="论文问答模型" title="论文问答模型">${modelOptions}</select></label>`,
+      '        <label><span>推理强度</span><select data-setting="knowledge-effort" aria-label="论文问答推理强度" title="论文问答推理强度"><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option><option value="max">max</option><option value="ultra">ultra</option></select></label>',
+      "      </div></div></details>",
+      '    <div class="knowledge-session" role="status">尚未建立 Codex 会话</div>',
+      "  </div>",
+      '  <div class="knowledge-threadbar" title="论文问答只读取原始调研 Markdown 和主动附加的原始 PDF；手动修改、AI 修订与补充图解不会进入对话上下文。">',
       '    <select data-action="select-thread" aria-label="选择 Codex 对话"></select>',
-      '    <div class="knowledge-session">尚未建立 Codex 会话</div>',
+      '    <button type="button" data-action="new-thread" title="开启独立的 Codex 对话">+ 新建</button>',
+      '    <details class="knowledge-thread-menu"><summary aria-label="更多对话操作" title="更多对话操作">···</summary><div class="knowledge-thread-menu-popover">',
       '    <button type="button" data-action="archive-thread" title="将当前对话保存为只读历史">归档</button>',
       '    <button type="button" data-action="delete-thread" title="永久删除当前对话及其消息">删除</button>',
-      '    <button type="button" data-action="new-thread" title="开启独立的 Codex 对话">+ 新建</button>',
+      '    </div></details>',
       '  </div>',
       '  <div class="knowledge-messages" aria-live="polite"></div>',
       '  <div class="knowledge-contexts"></div>',
       '  <div class="knowledge-composer">',
       '    <textarea placeholder="针对当前文档提问。可先在正文中选中文字加入上下文。"></textarea>',
       '    <div class="knowledge-toolbar">',
-      '      <div class="knowledge-model-settings">',
-      '        <select data-setting="knowledge-model" aria-label="知识问答模型" title="知识问答模型"><option value="gpt-5.6-terra">gpt-5.6-terra</option><option value="gpt-5.6-sol">gpt-5.6-sol</option><option value="gpt-6-astra">gpt-6-astra</option></select>',
-      '        <select data-setting="knowledge-effort" aria-label="知识问答推理强度" title="知识问答推理强度"><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option><option value="max">max</option><option value="ultra">ultra</option></select>',
-      "      </div>",
       '      <div class="knowledge-toolbar-actions">',
       '        <button type="button" data-action="add-pdf" title="把当前物理页渲染为图像并交给 Codex 观察">加入当前 PDF 页图像</button>',
       '        <button type="button" data-action="send">发送问题</button>',
@@ -118,7 +182,8 @@
     ].join("");
     faqPane.innerHTML = [
       '<section class="knowledge-faq">',
-      '  <div class="knowledge-faq-search"><input type="search" placeholder="搜索问题、答案、备注或来源" aria-label="搜索已固化知识"><span aria-live="polite"></span></div>',
+      '<div class="reader-companion-heading"><span class="reader-companion-eyebrow">把理解留在这里</span><h2>研究笔记</h2><p>保存关键结论，留待下一次阅读。</p></div>',
+      '  <div class="knowledge-faq-search"><input type="search" placeholder="搜索问题、答案、备注或来源" aria-label="搜索研究笔记"><span aria-live="polite"></span></div>',
       '  <div class="knowledge-faq-list"></div>',
       "</section>"
     ].join("");
@@ -135,15 +200,35 @@
     faqSearchInput = faqPane.querySelector('.knowledge-faq-search input');
     faqSearchCount = faqPane.querySelector('.knowledge-faq-search span');
 
-    panel.querySelectorAll(".evidence-panel__tab").forEach(tab => {
-      tab.addEventListener("click", () => switchTab(tab.dataset.readerTab));
-    });
+
     assistantPane.querySelector('[data-action="send"]').addEventListener("click", sendQuestion);
     assistantPane.querySelector('[data-action="add-pdf"]').addEventListener("click", addPdfContext);
     threadSelect.addEventListener("change", () => selectChatThread(threadSelect.value));
     archiveThreadButton.addEventListener("click", archiveCurrentThread);
     deleteThreadButton.addEventListener("click", deleteCurrentThread);
     newThreadButton.addEventListener("click", createNewThread);
+    const settingsPanel = assistantPane.querySelector(".knowledge-options");
+    settingsPanel.addEventListener("keydown", event => {
+      if (event.key === "Escape") { event.stopPropagation(); settingsPanel.open = false; settingsPanel.querySelector("summary").focus(); }
+    });
+    const compactMenus = [settingsPanel, assistantPane.querySelector(".knowledge-thread-menu")];
+    compactMenus.forEach(menu => {
+      menu.addEventListener("toggle", () => {
+        if (menu.open) compactMenus.forEach(other => { if (other !== menu) other.open = false; });
+      });
+      menu.addEventListener("keydown", event => {
+        if (event.key === "Escape") { event.stopPropagation(); menu.open = false; menu.querySelector("summary").focus(); }
+      });
+      menu.addEventListener("click", event => {
+        if (event.target.closest("button")) menu.open = false;
+      });
+    });
+    assistantPane.addEventListener("focusout", event => {
+      compactMenus.forEach(menu => { if (!menu.contains(event.relatedTarget)) menu.open = false; });
+    });
+    document.addEventListener("click", event => {
+      compactMenus.forEach(menu => { if (!menu.contains(event.target)) menu.open = false; });
+    });
     knowledgeModelSelect.addEventListener("change", queueKnowledgeSettingsSave);
     knowledgeEffortSelect.addEventListener("change", queueKnowledgeSettingsSave);
     questionInput.addEventListener("keydown", event => {
@@ -152,6 +237,8 @@
     faqSearchInput.addEventListener("input", filterFaqItems);
     selectionMenu = document.createElement("div");
     selectionMenu.className = "knowledge-selection-menu";
+    // Clicking an action must not collapse the article selection before click.
+    selectionMenu.addEventListener("mousedown", event => event.preventDefault());
     selectionMenu.innerHTML = '<button type="button" data-action="context">加入问答</button><button type="button" data-action="manual-edit">手动修改</button><button type="button" data-action="edit">AI 修订</button>';
     selectionMenu.querySelector('[data-action="context"]').addEventListener("click", captureSelection);
     selectionMenu.querySelector('[data-action="manual-edit"]').addEventListener("click", openManualRevisionEditor);
@@ -159,14 +246,14 @@
     document.body.appendChild(selectionMenu);
     selectionNotice = document.createElement("div");
     selectionNotice.className = "knowledge-selection-notice";
-    selectionNotice.textContent = "修订内容不能加入知识问答；请点击“查看原文”后框选原始文字。";
+    selectionNotice.textContent = "修订内容不能加入论文问答；请点击“查看原文”后框选原始文字。";
     document.body.appendChild(selectionNotice);
     document.addEventListener("selectionchange", scheduleSelectionMenu);
     return true;
   }
 
   async function api(path, options) {
-    const response = await fetch(path, {
+    return window.ReaderApi.request(path, {
       ...options,
       headers: {
         "Content-Type": "application/json",
@@ -174,9 +261,6 @@
         ...(options?.headers || {})
       }
     });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || `请求失败：${response.status}`);
-    return data;
   }
 
   function validPdfContext(value) {
@@ -574,38 +658,48 @@
     document.querySelectorAll(".reader-manual-replacement").forEach(element => element.remove());
   }
 
-  function textRange(block, start, end) {
-    const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, {
-      acceptNode(node) {
-        return node.parentElement?.closest(".reader-manual-replacement")
-          ? NodeFilter.FILTER_REJECT
-          : NodeFilter.FILTER_ACCEPT;
-      }
-    });
-    let offset = 0;
-    let startNode = null;
-    let endNode = null;
-    let startOffset = 0;
-    let endOffset = 0;
-    while (walker.nextNode()) {
-      const node = walker.currentNode;
-      const next = offset + node.data.length;
-      if (!startNode && start >= offset && start <= next) {
-        startNode = node;
-        startOffset = start - offset;
-      }
-      if (end >= offset && end <= next) {
-        endNode = node;
-        endOffset = end - offset;
-        break;
-      }
-      offset = next;
-    }
-    if (!startNode || !endNode) return null;
+  function originalBlockText(block) {
     const range = document.createRange();
-    range.setStart(startNode, startOffset);
-    range.setEnd(endNode, endOffset);
-    return range;
+    range.selectNodeContents(block);
+    return originalRangeText(range);
+  }
+
+  function textRange(block, start, end) {
+    // Address the same Unicode code points and atomic TeX sources as selectionDetails.
+    const segments = [];
+    let offset = 0;
+    function visit(node) {
+      if (node.nodeType === Node.ELEMENT_NODE) {
+        if (node.matches(".reader-manual-replacement, .reader-revision")) return;
+        if (node.matches("[data-reader-math-source]")) {
+          const length = Array.from(node.dataset.readerMathSource).length;
+          segments.push({ node, start: offset, end: offset + length, math: true });
+          offset += length;
+          return;
+        }
+      } else if (node.nodeType === Node.TEXT_NODE) {
+        const length = Array.from(node.data).length;
+        segments.push({ node, start: offset, end: offset + length });
+        offset += length;
+        return;
+      }
+      node.childNodes.forEach(visit);
+    }
+    visit(block);
+    const range = document.createRange();
+    function boundary(value, isEnd) {
+      const part = segments.find(part => value >= part.start && value <= part.end);
+      if (!part) return false;
+      if (part.math) {
+        const after = value === part.end || (value > part.start && isEnd);
+        range[isEnd ? (after ? "setEndAfter" : "setEndBefore") : (after ? "setStartAfter" : "setStartBefore")](part.node);
+      } else {
+        const units = Array.from(part.node.data).slice(0, value - part.start).join("").length;
+        range[isEnd ? "setEnd" : "setStart"](part.node, units);
+      }
+      return true;
+    }
+    return boundary(start, false) && boundary(end, true) ? range : null;
   }
 
   function revisionBlocks(prefix = "") {
@@ -721,11 +815,12 @@
     if (Array.isArray(item.selection_contexts) && item.selection_contexts.length) {
       return item.selection_contexts.map(context => {
         const block = document.querySelector(`[data-reader-block="${CSS.escape(context.block_id || "")}"]`);
-        if (block?.textContent.slice(context.start, context.end) === context.text) return context;
-        const matches = revisionBlocks(context.block_id?.slice(0, 1)).filter(candidate => candidate.textContent.includes(context.text));
+        if (block && Array.from(originalBlockText(block)).slice(context.start, context.end).join("") === context.text) return context;
+        const matches = revisionBlocks(context.block_id?.slice(0, 1)).filter(candidate => originalBlockText(candidate).includes(context.text));
         if (matches.length !== 1) return null;
-        const start = matches[0].textContent.indexOf(context.text);
-        return { ...context, block_id: matches[0].dataset.readerBlock, start, end: start + context.text.length };
+        const source = originalBlockText(matches[0]);
+        const start = Array.from(source.slice(0, source.indexOf(context.text))).length;
+        return { ...context, block_id: matches[0].dataset.readerBlock, start, end: start + Array.from(context.text).length };
       }).filter(Boolean);
     }
     const blockIds = Array.isArray(item.target_blocks) ? item.target_blocks : [];
@@ -733,8 +828,10 @@
     return blockIds.map((blockId, index) => {
       const block = document.querySelector(`[data-reader-block="${CSS.escape(blockId)}"]`);
       const text = parts[index] || "";
-      const start = block?.textContent.indexOf(text) ?? -1;
-      return start < 0 ? null : { block_id: blockId, start, end: start + text.length, text };
+      const source = block ? originalBlockText(block) : "";
+      const textIndex = source.indexOf(text);
+      const start = textIndex < 0 ? -1 : Array.from(source.slice(0, textIndex)).length;
+      return start < 0 ? null : { block_id: blockId, start, end: start + Array.from(text).length, text };
     }).filter(Boolean);
   }
 
@@ -781,7 +878,7 @@
     })).filter(entry => entry.block);
     if (!entries.length) return false;
     const coversWholeBlocks = entries.every(({ context, block }) =>
-      context.start === 0 && context.end === block.textContent.length
+      !block.closest("table") && context.start === 0 && context.end === Array.from(originalBlockText(block)).length
     );
     const blockReplacement = coversWholeBlocks || entries.length > 1;
     const replacement = document.createElement(blockReplacement ? "div" : "span");
@@ -811,7 +908,8 @@
         insertionPoint = original;
       }
       if (!insertionPoint) return false;
-      entries[0].block.before(replacement);
+      if (entries[0].block.closest("table")) insertionPoint.after(replacement);
+      else entries[0].block.before(replacement);
     } else {
       let insertionPoint = null;
       for (const { context, block } of entries) {
@@ -898,12 +996,40 @@
     originalText.textContent = discussion.target_text;
     original.append(summary, originalText);
     preview.appendChild(original);
+    dialog.classList.add("has-discussion");
+    dialog.querySelector(".reader-revision-editor__error")?.remove();
+    const historyNav = document.createElement("nav");
+    historyNav.className = "reader-revision-history-nav";
+    historyNav.setAttribute("aria-label", "修订对话历史");
+    const count = document.createElement("strong");
+    count.textContent = `${(discussion.turns || []).length} 轮`;
+    count.title = "全部对话";
+    const jump = document.createElement("select");
+    jump.setAttribute("aria-label", "跳转到某轮对话");
+    const latest = document.createElement("button");
+    latest.type = "button";
+    latest.textContent = "最新回复 ↓";
+    const jumpTo = index => {
+      const turn = preview.querySelectorAll(".reader-revision-turn")[index];
+      if (turn) preview.scrollTop += turn.getBoundingClientRect().top - preview.getBoundingClientRect().top - historyNav.offsetHeight - 8;
+    };
+    jump.addEventListener("change", () => jumpTo(Number(jump.value)));
+    latest.addEventListener("click", () => {
+      jump.value = String((discussion.turns || []).length - 1);
+      jumpTo(Number(jump.value));
+    });
+    historyNav.append(count, jump, latest);
+    preview.appendChild(historyNav);
     for (const [index, turn] of (discussion.turns || []).entries()) {
+      const option = document.createElement("option");
+      option.value = String(index);
+      option.textContent = `第 ${index + 1} 轮 · ${turn.instruction}`;
+      jump.appendChild(option);
       const turnElement = document.createElement("section");
       turnElement.className = "reader-revision-turn";
       const question = document.createElement("div");
       question.className = "reader-revision-turn__question";
-      question.textContent = `你的要求 ${index + 1}：${turn.instruction}`;
+      question.textContent = `你 · 第 ${index + 1} 轮：${turn.instruction}`;
       const candidate = revisionCard(turn.candidate);
       const choose = document.createElement("button");
       choose.type = "button";
@@ -930,19 +1056,25 @@
       preview.appendChild(turnElement);
     }
     const controls = dialog.querySelector(".reader-revision-editor__controls");
+    preview.after(controls);
     controls.querySelector('[name="instruction"]').value = "";
-    controls.querySelector('[name="instruction"]').placeholder = "继续追问，例如：保留公式，但把图改成可交互版本";
+    controls.querySelector('[name="instruction"]').style.height = "";
+    controls.querySelector('[name="instruction"]').placeholder = "继续追问，或提出修改要求…";
     const actions = dialog.querySelector(".reader-revision-editor__actions");
     dialog._generateButton.disabled = false;
     dialog._generateButton.textContent = "发送追问并生成候选";
-    actions.replaceChildren(dialog._cancelButton, dialog._deleteButton, dialog._generateButton);
-    dialog.elements.instruction.focus();
+    actions.replaceChildren(dialog._settings, dialog._generateButton);
+    jump.value = String((discussion.turns || []).length - 1);
+    requestAnimationFrame(() => jumpTo(Number(jump.value)));
+    revisionDiscussions = [...revisionDiscussions.filter(item => item.id !== discussion.id), discussion];
+    // A completed request must not move focus or scroll away from the document.
+    if (!overlay.classList.contains("reader-revision-editor--side")) dialog.elements.instruction.focus();
   }
 
   let dialogSequence = 0;
-  function mountDialog(overlay, dialog) {
+  function mountDialog(overlay, dialog, { modal = true } = {}) {
     const previousFocus = document.activeElement;
-    const background = [...document.body.children].filter(element => element !== overlay);
+    const background = modal ? [...document.body.children].filter(element => element !== overlay) : [];
     const inertStates = background.map(element => [element, element.inert]);
     background.forEach(element => { element.inert = true; });
     const heading = dialog.querySelector("h3");
@@ -952,9 +1084,23 @@
       dialog.setAttribute("aria-labelledby", heading.id);
     }
     dialog.setAttribute("role", "dialog");
-    dialog.setAttribute("aria-modal", "true");
+    dialog.setAttribute("aria-modal", String(modal));
     dialog.tabIndex = -1;
     const onKeydown = event => {
+      if (!modal) {
+        if (event.key === "Escape" && overlay.contains(event.target)) {
+          event.preventDefault();
+          event.stopPropagation();
+          const settings = dialog.querySelector(".reader-revision-settings[open]");
+          if (settings) {
+            settings.open = false;
+            settings.querySelector("summary").focus();
+            return;
+          }
+          overlay._collapse();
+        }
+        return;
+      }
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
@@ -982,16 +1128,17 @@
     overlay._close = () => {
       if (!overlay.isConnected) return;
       document.removeEventListener("keydown", onKeydown, true);
+      const restoreFocus = modal || overlay.contains(document.activeElement);
       overlay.remove();
       inertStates.forEach(([element, inert]) => { element.inert = inert; });
-      document.body.classList.remove("reader-modal-open");
-      if (previousFocus?.isConnected) previousFocus.focus();
+      document.body.classList.remove(modal ? "reader-modal-open" : "reader-revision-side-open");
+      if (restoreFocus && previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
     };
     overlay.addEventListener("click", event => {
       if (event.target === overlay) dialog.focus();
     });
     document.addEventListener("keydown", onKeydown, true);
-    document.body.classList.add("reader-modal-open");
+    document.body.classList.add(modal ? "reader-modal-open" : "reader-revision-side-open");
     document.body.appendChild(overlay);
   }
 
@@ -1065,25 +1212,59 @@
     selectionMenu.classList.remove("is-visible");
     window.getSelection()?.removeAllRanges();
     const previousDialog = document.querySelector(".reader-revision-editor");
+    if (previousDialog?._pending) {
+      previousDialog._expand();
+      return;
+    }
     if (previousDialog?._close) previousDialog._close();
     else previousDialog?.remove();
     const overlay = document.createElement("div");
-    overlay.className = "reader-revision-editor";
+    overlay.className = "reader-revision-editor reader-revision-editor--side";
     const dialog = document.createElement("form");
     dialog.className = "reader-revision-editor__dialog";
     dialog.innerHTML = [
-      "<h3>编辑选中的正文</h3>",
+      '<header class="reader-revision-editor__header"><div><h3>理解与修订选中内容</h3><span class="reader-revision-editor__status" role="status" aria-live="polite">结合文章上下文，按需查阅论文与源码</span></div><button type="button" data-action="collapse" aria-expanded="true">收起</button></header>',
       '<div class="reader-revision-editor__controls">',
+      '<details class="reader-revision-settings"><summary title="模型、推理强度与讨论管理">设置</summary><div class="reader-revision-settings__panel">',
       '<div class="reader-revision-editor__model">',
-      '<label>模型<select name="model"><option value="gpt-5.6-terra">gpt-5.6-terra</option><option value="gpt-5.6-sol">gpt-5.6-sol</option><option value="gpt-6-astra">gpt-6-astra</option></select></label>',
+      `<label>模型名称<select name="model">${modelOptions}</select></label>`,
       '<label>推理强度<select name="effort"><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option><option value="max">max</option><option value="ultra">ultra</option></select></label>',
-      "</div>",
-      '<label>修改要求<textarea name="instruction" maxlength="2000" required placeholder="例如：核对这段结论的适用边界，并用一个简化图解释"></textarea></label>',
-      '<p>可继续追问候选；原文不会被直接覆盖。</p>',
+      "</div></div></details>",
+      '<label>你的问题或修改要求<textarea name="instruction" maxlength="2000" required placeholder="例如：这段代码属于哪个算法？为什么这样写，去掉这一项会怎样？"></textarea></label>',
       "</div>",
       '<div class="reader-revision-editor__preview"></div>',
       '<div class="reader-revision-editor__actions"></div>'
     ].join("");
+    const status = dialog.querySelector(".reader-revision-editor__status");
+    const settingsPopover = dialog.querySelector(".reader-revision-settings");
+    dialog._settings = settingsPopover;
+    const instruction = dialog.elements.instruction;
+    instruction.setAttribute("aria-label", "你的问题或修改要求");
+    instruction.addEventListener("input", () => {
+      // The first question fills the column; follow-ups grow beneath replies.
+      if (!dialog.classList.contains("has-discussion")) return;
+      if (!instruction.value) {
+        instruction.style.height = "";
+        return;
+      }
+      // CSS supplies the readable minimum and viewport-aware maximum.
+      instruction.style.height = "auto";
+      const borderHeight = instruction.offsetHeight - instruction.clientHeight;
+      instruction.style.height = `${instruction.scrollHeight + borderHeight}px`;
+    });
+    dialog.addEventListener("click", event => {
+      if (!settingsPopover.contains(event.target)) settingsPopover.open = false;
+    });
+    const collapse = dialog.querySelector('[data-action="collapse"]');
+    const setCollapsed = collapsed => {
+      overlay.classList.toggle("is-collapsed", collapsed);
+      collapse.textContent = collapsed ? "展开" : "收起";
+      collapse.setAttribute("aria-expanded", String(!collapsed));
+      collapse.focus({ preventScroll: true });
+    };
+    overlay._collapse = () => setCollapsed(true);
+    overlay._expand = () => setCollapsed(false);
+    collapse.addEventListener("click", () => setCollapsed(!overlay.classList.contains("is-collapsed")));
     dialog.elements.model.value = revisionSettings.model;
     dialog.elements.effort.value = revisionSettings.effort;
     syncReasoningOptions(dialog.elements.model, dialog.elements.effort);
@@ -1101,15 +1282,16 @@
         dialog.elements.model.value = previous.model;
         dialog.elements.effort.value = previous.effort;
         syncReasoningOptions(dialog.elements.model, dialog.elements.effort);
-        dialog.querySelector(".reader-revision-editor__preview").textContent = error.message;
+        status.textContent = `设置保存失败：${error.message}`;
       }
     };
     dialog.elements.model.addEventListener("change", saveSettings);
     dialog.elements.effort.addEventListener("change", saveSettings);
     const cancel = document.createElement("button");
     cancel.type = "button";
-    cancel.textContent = "取消";
-    cancel.addEventListener("click", () => overlay._close());
+    cancel.textContent = "关闭";
+    cancel.className = "reader-revision-editor__close";
+    cancel.addEventListener("click", () => overlay._pending ? overlay._collapse() : overlay._close());
     const generate = document.createElement("button");
     generate.type = "submit";
     generate.className = "reader-revision-editor__primary";
@@ -1130,11 +1312,30 @@
     dialog._cancelButton = cancel;
     dialog._generateButton = generate;
     dialog._deleteButton = discardDiscussion;
-    dialog.querySelector(".reader-revision-editor__actions").append(cancel, generate);
+    settingsPopover.querySelector(".reader-revision-settings__panel").append(discardDiscussion);
+    dialog.querySelector(".reader-revision-editor__header").append(cancel);
+    dialog.querySelector(".reader-revision-editor__actions").append(settingsPopover, generate);
+    const original = document.createElement("details");
+    original.className = "reader-revision-editor__original";
+    const summary = document.createElement("summary");
+    summary.textContent = "查看选中原文";
+    const originalText = document.createElement("blockquote");
+    originalText.textContent = selection.contexts.map(item => item.text).join("\n\n");
+    original.append(summary, originalText);
+    dialog.querySelector(".reader-revision-editor__preview").append(original);
     dialog.addEventListener("submit", async event => {
       event.preventDefault();
+      if (overlay._pending) return;
+      overlay._pending = true;
+      dialog.querySelector(".reader-revision-editor__error")?.remove();
       generate.disabled = true;
       generate.textContent = "正在生成…";
+      settingsPopover.open = false;
+      status.textContent = "正在生成，可继续阅读原文…";
+      const progressJobId = window.crypto.randomUUID
+        ? window.crypto.randomUUID()
+        : `${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`.slice(0, 48);
+      const stopProgress = watchRevisionProgress(progressJobId, overlay, status);
       try {
         const candidate = await api("/api/revision/propose", {
           method: "POST",
@@ -1146,28 +1347,145 @@
             pdf_contexts: pdfContexts,
             model: dialog.elements.model.value,
             effort: dialog.elements.effort.value,
+            progress_job_id: progressJobId,
             ...(dialog._discussion?.id ? { discussion_id: dialog._discussion.id } : {})
           })
         });
         discardDiscussion.hidden = false;
         showRevisionDiscussion(candidate, overlay, dialog);
+        status.textContent = "候选已生成，展开查看或继续追问";
       } catch (error) {
         generate.disabled = false;
         generate.textContent = dialog._discussion ? "发送追问并生成候选" : "生成修改预览";
-        dialog.querySelector(".reader-revision-editor__preview").textContent = error.message;
+        const errorMessage = document.createElement("p");
+        errorMessage.className = "reader-revision-editor__error";
+        errorMessage.setAttribute("role", "alert");
+        errorMessage.textContent = error.message;
+        dialog.querySelector(".reader-revision-editor__controls").appendChild(errorMessage);
+        status.textContent = "生成失败，可展开重试";
+      } finally {
+        stopProgress();
+        overlay._pending = false;
+        cancel.textContent = "关闭";
       }
     });
     overlay.appendChild(dialog);
-    mountDialog(overlay, dialog);
+    mountDialog(overlay, dialog, { modal: false });
     const selectedIds = selection.contexts.map(item => item.block_id);
     const draft = [...revisionDiscussions].reverse().find(item =>
       item.status === "draft" && JSON.stringify(item.target_blocks) === JSON.stringify(selectedIds)
+      && item.target_text === selection.contexts.map(item => item.text).join("\n\n")
     );
     if (draft) {
       discardDiscussion.hidden = false;
       showRevisionDiscussion(draft, overlay, dialog);
     } else {
       dialog.elements.instruction.focus();
+    }
+  }
+
+  function watchRevisionProgress(jobId, overlay, status) {
+    const started = Date.now();
+    let stopped = false;
+    let timer;
+    let controller;
+    let state;
+    let received = started;
+    let unavailable = false;
+    const active = () => !stopped && overlay.isConnected && overlay._pending;
+    const stop = () => {
+      stopped = true;
+      window.clearInterval(clock);
+      window.clearTimeout(timer);
+      controller?.abort();
+    };
+    const render = () => {
+      if (!active()) { stop(); return; }
+      const elapsed = Math.floor((Date.now() - started) / 1000);
+      const message = unavailable ? "进度连接暂不可用，仍在等待回答"
+        : state?.message || "正在准备论文上下文…";
+      const activity = state?.last_event_seconds == null ? ""
+        : ` · 最近活动 ${state.last_event_seconds + Math.floor((Date.now() - received) / 1000)} 秒前`;
+      status.textContent = `${message} · 已等待 ${elapsed} 秒${activity}`;
+    };
+    const clock = window.setInterval(render, 1000);
+    const poll = async () => {
+      if (!active()) { stop(); return; }
+      controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 5000);
+      try {
+        const next = await api(`/api/revision/progress?job_id=${encodeURIComponent(jobId)}`, {
+          signal: controller.signal
+        });
+        if (!active()) return;
+        state = next;
+        received = Date.now();
+        unavailable = false;
+        render();
+        if (["completed", "failed"].includes(state.status)) return;
+      } catch (_error) {
+        if (!active()) return;
+        unavailable = true;
+        render();
+      } finally {
+        window.clearTimeout(timeout);
+      }
+      if (active()) timer = window.setTimeout(poll, 1000);
+    };
+    render();
+    poll();
+    return stop;
+  }
+
+  function inlineCitations(body, citations) {
+    const verified = new Map();
+    for (const citation of citations) {
+      const context = validPdfContext(citation);
+      if (context) verified.set(String(citation.number), { citation, context });
+    }
+    const used = new Set();
+    const makeTag = (number) => {
+      const { citation, context } = verified.get(number);
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "knowledge-citation";
+      button.textContent = `[证据${number} · 第${context.page}页${citation.locator ? " · " + citation.locator : ""}]`;
+      button.title = `${citation.label || "原文证据"}\n${citation.quote || ""}`;
+      button.setAttribute("aria-label", `证据${number}：跳转到 PDF 第 ${context.page} 页，${citation.label || "原文证据"}`);
+      button.addEventListener("click", () => window.dispatchEvent(new CustomEvent("reader:open-pdf-context", { detail: { ...context, quote: citation.quote, locator: citation.locator || "" } })));
+      used.add(number);
+      return button;
+    };
+    // Work on rendered text only: preserve Markdown, code, links and math.
+    const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    while (walker.nextNode()) {
+      if (!walker.currentNode.parentElement?.closest("a, button, code, pre, .arithmatex, mjx-container, script, style")) {
+        nodes.push(walker.currentNode);
+      }
+    }
+    for (const node of nodes) {
+      const pattern = /\[证据\s*(\d+)\]/g;
+      const fragment = document.createDocumentFragment();
+      let last = 0;
+      for (const match of node.textContent.matchAll(pattern)) {
+        if (!verified.has(match[1])) continue;
+        fragment.append(document.createTextNode(node.textContent.slice(last, match.index)), makeTag(match[1]));
+        last = match.index + match[0].length;
+      }
+      if (last) {
+        fragment.append(document.createTextNode(node.textContent.slice(last)));
+        node.replaceWith(fragment);
+      }
+    }
+    // Older answers may omit markers; retain access without restoring cards.
+    const remaining = [...verified.keys()].filter(number => !used.has(number));
+    if (remaining.length) {
+      const references = document.createElement("div");
+      references.className = "knowledge-citation-references";
+      references.append("原文引用：");
+      remaining.forEach(number => references.append(makeTag(number), " "));
+      body.appendChild(references);
     }
   }
 
@@ -1181,10 +1499,17 @@
     if (message.role === "assistant") body.appendChild(renderMarkdown(presentation.content));
     else body.textContent = message.content;
     element.appendChild(body);
+    if (message.mode === "explore") {
+      const badge = document.createElement("small");
+      badge.className = "knowledge-explore-label";
+      badge.textContent = "论文问答";
+      element.prepend(badge);
+    }
+    if (message.role === "assistant") inlineCitations(body, message.citations || []);
     const diagram = diagramElement(message.visualization || presentation?.visualization);
     if (diagram) element.appendChild(diagram);
     const visual = message.role === "assistant"
-      ? visualHtmlElement(message.visual_html, "知识问答可视化")
+      ? visualHtmlElement(message.visual_html, "论文问答可视化")
       : null;
     if (visual) element.appendChild(visual);
     if (message.role === "user" && Array.isArray(message.contexts)) {
@@ -1217,7 +1542,7 @@
       actions.className = "knowledge-message__actions";
       const save = document.createElement("button");
       save.type = "button";
-      save.textContent = "保存为 FAQ";
+      save.textContent = "保存为 研究笔记";
       save.addEventListener("click", () => openFaqEditor(message));
       actions.appendChild(save);
       element.appendChild(actions);
@@ -1231,7 +1556,7 @@
   function renderMessages(messages) {
     messageList.innerHTML = "";
     if (!messages.length) {
-      messageList.innerHTML = '<div class="knowledge-empty">这是该文档的知识问答会话。选择正文后提问，或直接询问整篇精读。</div>';
+      messageList.innerHTML = '<div class="knowledge-empty">这是该文档的论文问答会话。选择正文后提问，或直接询问整篇精读。</div>';
       return;
     }
     messages.filter(message => ["user", "assistant", "system"].includes(message.role)).forEach(appendMessage);
@@ -1255,7 +1580,7 @@
     const dialog = document.createElement("form");
     dialog.className = "knowledge-faq-editor__dialog";
     dialog.innerHTML = [
-      `<h3>${faq ? "编辑研究备忘录" : "保存为研究备忘录"}</h3>`,
+      `<h3>${faq ? "编辑研究笔记" : "保存为研究笔记"}</h3>`,
       '<label>标题<input name="question" maxlength="300" required></label>',
       '<label>核心结论<textarea name="answer" maxlength="5000" required></textarea></label>',
       '<label>个人备注（可选）<textarea name="note" maxlength="2000" placeholder="为什么值得记住？以后在什么场景使用？"></textarea></label>',
@@ -1339,9 +1664,9 @@
     pendingFaq = null;
     const saved = state.faq?.items || [];
     const heading = document.createElement("h3");
-    heading.textContent = "已固化知识";
+    heading.textContent = "研究笔记";
     list.appendChild(heading);
-    if (!saved.length) list.insertAdjacentHTML("beforeend", '<div class="knowledge-empty">尚未固化 FAQ。</div>');
+    if (!saved.length) list.insertAdjacentHTML("beforeend", '<div class="knowledge-empty">尚未保存研究笔记。</div>');
     saved.forEach(item => list.appendChild(faqItem(item, false)));
     filterFaqItems();
     syncFaqToDocument(saved);
@@ -1462,7 +1787,7 @@
       const remove = document.createElement("button");
       remove.type = "button";
       remove.className = "knowledge-faq__delete";
-      remove.textContent = "删除这条 FAQ";
+      remove.textContent = "删除这条 研究笔记";
       remove.addEventListener("click", () => deleteFaq(item, remove));
       actions.append(edit, remove);
       details.appendChild(actions);
@@ -1476,24 +1801,26 @@
   }
 
   function syncReasoningOptions(modelSelect, effortSelect) {
-    const astra = modelSelect.value === "gpt-6-astra";
+    const gpt6 = modelSelect.value.startsWith("gpt-6");
     for (const option of effortSelect.options) {
-      option.disabled = astra ? option.value === "ultra" : option.value === "low";
+      option.disabled = gpt6 && option.value === "ultra";
       option.hidden = option.disabled;
     }
     if (!effortSelect.value || effortSelect.selectedOptions[0].disabled) {
-      effortSelect.value = astra && effortSelect.value === "ultra" ? "max" : "medium";
+      effortSelect.value = gpt6 && effortSelect.value === "ultra" ? "max" : "medium";
     }
+  }
+
+  function normalizeModelSettings(value) {
+    const model = supportedModels.includes(value.model) ? value.model : defaultModel;
+    const effort = value.effort === "ultra" ? "max"
+      : ["low", "medium", "high", "xhigh", "max"].includes(value.effort) ? value.effort : "medium";
+    return { model, effort };
   }
 
   function applyKnowledgeSettings(value) {
     if (!value || !knowledgeModelSelect || !knowledgeEffortSelect) return;
-    const model = ["gpt-5.6-terra", "gpt-5.6-sol", "gpt-6-astra"].includes(value.model)
-      ? value.model
-      : "gpt-5.6-terra";
-    const effort = ["low", "medium", "high", "xhigh", "max", "ultra"].includes(value.effort)
-      ? value.effort
-      : "medium";
+    const { model, effort } = normalizeModelSettings(value);
     knowledgeSettings = { model, effort };
     knowledgeModelSelect.value = model;
     knowledgeEffortSelect.value = effort;
@@ -1547,7 +1874,7 @@
     }
     threadSelect.value = selectedThreadId || "";
     const current = selectedThread();
-    const writable = Boolean(current && current.id === activeThreadId && current.status !== "archived");
+    const writable = Boolean(current && current.status !== "archived");
     archiveThreadButton.disabled = !writable;
     archiveThreadButton.hidden = !current;
     deleteThreadButton.disabled = !current;
@@ -1558,11 +1885,12 @@
     knowledgeModelSelect.disabled = !writable;
     knowledgeEffortSelect.disabled = !writable;
     questionInput.placeholder = writable
-      ? "针对当前文档提问。可先在正文中选中文字加入上下文。"
+      ? "写下你的疑问或想法，可以一次提多个问题。不需要知道页码。"
       : "该对话已归档，只能查看历史；请新建对话后继续提问。";
   }
 
   function applyChatState(state) {
+    refreshPageQuestions();
     activeThreadId = state.active_thread_id || null;
     selectedThreadId = state.selected_thread_id || state.thread?.id || null;
     chatThreads = state.threads || [];
@@ -1585,18 +1913,19 @@
     renderMessages(state.messages || []);
   }
 
-  async function loadState(threadId = "") {
+  async function loadState(threadId = "", messageId = "") {
     const requestedDocumentId = documentId;
     const settingsVersion = knowledgeSettingsVersion;
     const query = new URLSearchParams({ document_id: documentId });
     if (threadId) query.set("thread_id", threadId);
+    if (messageId) query.set("message_id", messageId);
     const state = await api(`/api/state?${query}`, { method: "GET" });
     if (requestedDocumentId !== documentId) return;
     applyChatState(state);
     renderFaq(state);
     renderRevisions(state.revisions?.items || []);
     if (state.revision_settings?.model && state.revision_settings?.effort) {
-      revisionSettings = state.revision_settings;
+      revisionSettings = normalizeModelSettings(state.revision_settings);
     }
     if (
       state.knowledge_settings?.model
@@ -1620,11 +1949,6 @@
   }
 
   async function createNewThread() {
-    const current = selectedThread();
-    const warning = current && current.id === activeThreadId && current.status !== "archived" && (current.message_count || 0) > 0
-      ? "新建对话后，当前对话会归档为只读历史。继续吗？"
-      : "新建一个独立的 Codex 对话？";
-    if (!window.confirm(warning)) return;
     newThreadButton.disabled = true;
     try {
       const state = await api("/api/chat/new", {
@@ -1646,7 +1970,7 @@
 
   async function archiveCurrentThread() {
     const current = selectedThread();
-    if (!current || current.id !== activeThreadId || current.status === "archived") return;
+    if (!current || current.status === "archived") return;
     if (!window.confirm("归档后该对话保留在页面中，但不能再继续调用 Codex。继续吗？")) return;
     archiveThreadButton.disabled = true;
     try {
@@ -1698,36 +2022,37 @@
     if (endMath) range.setEndAfter(endMath);
     const startElement = range.startContainer.nodeType === Node.ELEMENT_NODE ? range.startContainer : range.startContainer.parentElement;
     const endElement = range.endContainer.nodeType === Node.ELEMENT_NODE ? range.endContainer : range.endContainer.parentElement;
-    const startBlock = startElement?.closest("[data-reader-block]");
-    const endBlock = endElement?.closest("[data-reader-block]");
-    const article = startBlock?.closest(".md-content__inner");
-    if (!startBlock || !endBlock || !article || endBlock.closest(".md-content__inner") !== article) return null;
-    const blocks = Array.from(article.querySelectorAll("[data-reader-block]"));
-    const startIndex = blocks.indexOf(startBlock);
-    const endIndex = blocks.indexOf(endBlock);
-    if (startIndex < 0 || endIndex < startIndex || endIndex - startIndex >= 48) return null;
+    const article = startElement?.closest(".md-content__inner");
+    if (!article || endElement?.closest(".md-content__inner") !== article) return null;
+    // A standalone formula is itself a block. After snapping its boundaries,
+    // the range endpoints can be on the article rather than inside a paragraph.
+    const blocks = Array.from(article.querySelectorAll("[data-reader-block]"))
+      .filter(block => range.intersectsNode(block));
     const selected = [];
     let total = 0;
-    for (const block of blocks.slice(startIndex, endIndex + 1)) {
+    for (const block of blocks) {
       // Ignore annotated ancestors when a table cell or other nested block is
       // selected; otherwise the same visible text would be sent twice.
-      if (blocks.slice(startIndex, endIndex + 1).some(candidate => candidate !== block && block.contains(candidate))) continue;
+      if (blocks.some(candidate => candidate !== block && block.contains(candidate))) continue;
       const intersection = document.createRange();
       intersection.selectNodeContents(block);
-      if (block === startBlock || block.contains(range.startContainer)) intersection.setStart(range.startContainer, range.startOffset);
-      if (block === endBlock || block.contains(range.endContainer)) intersection.setEnd(range.endContainer, range.endOffset);
-      const text = originalRangeText(intersection);
+      if (range.compareBoundaryPoints(Range.START_TO_START, intersection) > 0) intersection.setStart(range.startContainer, range.startOffset);
+      if (range.compareBoundaryPoints(Range.END_TO_END, intersection) < 0) intersection.setEnd(range.endContainer, range.endOffset);
+      if (intersection.collapsed) continue;
+      // cloneContents omits the block itself, including its saved TeX attribute.
+      const formulaSource = block.dataset.readerMathSource;
+      const text = formulaSource ?? originalRangeText(intersection);
       if (!text.trim()) continue;
       const prefix = document.createRange();
       prefix.selectNodeContents(block);
       prefix.setEnd(intersection.startContainer, intersection.startOffset);
       // The API uses Python Unicode code-point offsets, not UTF-16 units.
-      const start = Array.from(originalRangeText(prefix)).length;
+      const start = formulaSource !== undefined ? 0 : Array.from(originalRangeText(prefix)).length;
       const length = Array.from(text).length;
       total += length;
       selected.push({ block_id: block.dataset.readerBlock, start, end: start + length, text });
     }
-    if (!selected.length || total > 20_000) return null;
+    if (!selected.length || selected.length > 48 || total > 20_000) return null;
     return { contexts: selected, rect: range.getBoundingClientRect() };
   }
 
@@ -1750,6 +2075,27 @@
   }
 
   let selectionTimer;
+  let mathSelectionFrame;
+  function scheduleMathSelectionHighlight() {
+    if (mathSelectionFrame) return;
+    mathSelectionFrame = requestAnimationFrame(() => {
+      mathSelectionFrame = null;
+      const selection = window.getSelection();
+      const ranges = selection && !selection.isCollapsed
+        ? Array.from({ length: selection.rangeCount }, (_, index) => selection.getRangeAt(index)) : [];
+      document.querySelectorAll("article .arithmatex").forEach(formula => {
+        const selected = ranges.some(range => {
+          if (!range.intersectsNode(formula)) return false;
+          const contents = document.createRange();
+          contents.selectNodeContents(formula);
+          if (range.compareBoundaryPoints(Range.START_TO_START, contents) > 0) contents.setStart(range.startContainer, range.startOffset);
+          if (range.compareBoundaryPoints(Range.END_TO_END, contents) < 0) contents.setEnd(range.endContainer, range.endOffset);
+          return !contents.collapsed;
+        });
+        formula.classList.toggle("reader-math-selected", selected);
+      });
+    });
+  }
   function placeSelectionPopup(element, rect) {
     element.classList.add("is-visible");
     const margin = 8;
@@ -1765,6 +2111,7 @@
   }
 
   function scheduleSelectionMenu() {
+    scheduleMathSelectionHighlight();
     clearTimeout(selectionTimer);
     selectionTimer = setTimeout(() => {
       const rawSelection = window.getSelection();
@@ -1832,6 +2179,9 @@
   }
 
   function setBusy(busy, label) {
+    questionBusy = busy;
+    publishPageQuestions();
+    assistantPane.querySelectorAll(".knowledge-retry").forEach(button => { button.disabled = busy; });
     assistantPane.querySelector('[data-action="send"]').disabled = busy;
     threadSelect.disabled = busy;
     archiveThreadButton.disabled = busy;
@@ -1839,56 +2189,138 @@
     newThreadButton.disabled = busy;
     knowledgeModelSelect.disabled = busy;
     knowledgeEffortSelect.disabled = busy;
+    assistantPane.querySelectorAll("[data-knowledge-mode]").forEach(button => { button.disabled = busy; });
     if (label) sessionLabel.textContent = label;
   }
 
   function restoreSessionLabel() {
     const current = selectedThread();
-    if (current?.status === "archived" || (current && current.id !== activeThreadId)) {
+    if (current?.status === "archived") {
       sessionLabel.textContent = "只读";
       sessionLabel.title = current.session_id ? `Codex Session：${current.session_id}` : "只读历史";
     } else {
-      sessionLabel.textContent = currentSessionId ? currentSessionId.slice(0, 8) : "未连接";
+      sessionLabel.textContent = currentSessionId || current?.message_count ? "可继续提问" : "新对话";
       sessionLabel.title = currentSessionId ? `Codex Session：${currentSessionId}` : "新对话尚未调用 Codex";
     }
   }
 
-  async function sendQuestion() {
-    const question = questionInput.value.trim();
+  async function sendQuestion(retry = null) {
+    if (typeof retry?.question !== "string") retry = null;
+    if (retry && retry.threadId !== selectedThreadId) return;
+    const question = retry ? retry.question : questionInput.value.trim();
     const current = selectedThread();
-    if (!question || !current || current.id !== activeThreadId || current.status === "archived") return;
-    const sentContexts = contexts.map(context => ({ ...context }));
-    const sentPdfContexts = pdfContexts.map(context => ({ ...context }));
-    contexts = [];
-    pdfContexts = [];
-    questionInput.value = "";
-    renderContexts();
+    if (!question || !current || current.status === "archived" || questionBusy || openingQuestion) return;
+    const sentContexts = (retry?.contexts || contexts).map(context => ({ ...context }));
+    const sentPdfContexts = (retry?.pdfContexts || pdfContexts).map(context => ({ ...context }));
+    const mode = "explore";
+    const explorationSource = retry?.explorationSource || currentPdfContext?.source_id || window.__readerPdfContext?.sourceId;
+    if (mode === "explore" && !explorationSource) {
+      sessionLabel.textContent = "请先打开要探查的论文 PDF";
+      return;
+    }
+    const request = { question, contexts: sentContexts, pdfContexts: sentPdfContexts, threadId: selectedThreadId,
+      mode, explorationSource,
+      model: retry?.model || knowledgeModelSelect.value, effort: retry?.effort || knowledgeEffortSelect.value };
+    if (!retry) {
+      contexts = [];
+      pdfContexts = [];
+      questionInput.value = "";
+      renderContexts();
+    }
     if (messageList.querySelector(".knowledge-empty")) messageList.innerHTML = "";
     const pendingMessage = {
       id: `pending-${Date.now()}`,
       role: "user",
+      mode,
       content: question,
       contexts: sentContexts,
       pdf_contexts: sentPdfContexts
     };
     const pendingElement = appendMessage(pendingMessage);
     pendingElement.classList.add("is-pending");
-    setBusy(true, "回答中…");
+    const progressJobId = window.crypto.randomUUID
+      ? window.crypto.randomUUID()
+      : `${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`.slice(0, 48);
+    const progress = document.createElement("div");
+    progress.className = "knowledge-message__progress";
+    const progressLabel = document.createElement("span");
+    progressLabel.setAttribute("role", "status");
+    progressLabel.textContent = "正在准备问题…";
+    const progressMeta = document.createElement("small");
+    progress.append(progressLabel, progressMeta);
+    pendingElement.appendChild(progress);
+    const progressDocument = documentId;
+    const progressStarted = Date.now();
+    let progressTimer;
+    let progressStopped = false;
+    let progressController;
+    let progressState = null;
+    let progressReceived = 0;
+    let progressUnavailable = false;
+    const stopped = () => progressStopped || progressDocument !== documentId || !pendingElement.isConnected;
+    const updateProgressClock = () => {
+      if (stopped()) { stopProgress(); return; }
+      const elapsed = Math.floor((Date.now() - progressStarted) / 1000);
+      const activity = progressUnavailable ? "进度连接暂不可用，仍在等待回答"
+        : progressState?.status === "unknown" ? "等待后台接收任务"
+        : progressState?.last_event_seconds == null ? "等待 Codex 活动"
+        : `最近活动 ${progressState.last_event_seconds + Math.floor((Date.now() - progressReceived) / 1000)} 秒前`;
+      progressMeta.textContent = `已等待 ${elapsed} 秒 · ${activity}`;
+    };
+    const stopProgress = () => {
+      progressStopped = true;
+      window.clearTimeout(progressTimer);
+      window.clearInterval(progressClock);
+      progressController?.abort();
+    };
+    const progressClock = window.setInterval(updateProgressClock, 1000);
+    const pollProgress = async () => {
+      if (stopped()) { stopProgress(); return; }
+      progressController = new AbortController();
+      const timeout = window.setTimeout(() => progressController?.abort(), 5000);
+      try {
+        const state = await api(`/api/ask/progress?job_id=${encodeURIComponent(progressJobId)}`, {
+          signal: progressController.signal
+        });
+        if (stopped()) return;
+        progressState = state;
+        progressReceived = Date.now();
+        progressUnavailable = false;
+        if (state.message) progressLabel.textContent = state.message;
+        updateProgressClock();
+        if (["completed", "failed"].includes(state.status)) return;
+      } catch (_error) {
+        if (stopped()) return;
+        progressUnavailable = true;
+        updateProgressClock();
+      } finally {
+        window.clearTimeout(timeout);
+      }
+      if (!stopped()) progressTimer = window.setTimeout(pollProgress, 1000);
+    };
+    updateProgressClock();
+    setBusy(true, mode === "explore" ? "正在探查全文并核对证据，可能需要几分钟…" : "回答中…");
     try {
       await knowledgeSettingsSave;
+      pollProgress();
       const result = await api("/api/ask", {
         method: "POST",
         body: JSON.stringify({
           document_id: documentId,
           document_sha256: documentSha,
-          thread_id: selectedThreadId,
+          thread_id: request.threadId,
           question,
+          mode: request.mode,
+          exploration_source: request.explorationSource,
           contexts: sentContexts,
           pdf_contexts: sentPdfContexts,
-          model: knowledgeModelSelect.value,
-          effort: knowledgeEffortSelect.value
+          model: request.model,
+          effort: request.effort,
+          progress_job_id: progressJobId
         })
       });
+      stopProgress();
+      progress.remove();
       pendingElement.classList.remove("is-pending");
       const userMessage = result.messages.find(message => message.role === "user");
       if (userMessage?.id) pendingElement.dataset.messageId = userMessage.id;
@@ -1902,17 +2334,51 @@
       restoreSessionLabel();
       requestAnimationFrame(() => revealMessage(messageList.lastElementChild, "smooth"));
     } catch (error) {
+      stopProgress();
+      progress.remove();
       pendingElement.classList.remove("is-pending");
-      appendMessage({ role: "system", content: `Codex 调用失败：${error.message}` });
-      sessionLabel.textContent = error.message;
+      const failure = document.createElement("div");
+      failure.className = "knowledge-send-failure";
+      const reason = document.createElement("p");
+      reason.textContent = `发送失败：${error.message}`;
+      reason.setAttribute("role", "alert");
+      const retryButton = document.createElement("button");
+      retryButton.type = "button";
+      retryButton.className = "knowledge-retry";
+      retryButton.textContent = "重试本轮";
+      retryButton.addEventListener("click", () => {
+        failure.remove();
+        pendingElement.remove();
+        sendQuestion(request);
+      });
+      const restore = document.createElement("button");
+      restore.type = "button";
+      restore.textContent = "恢复到输入框";
+      restore.addEventListener("click", () => {
+        questionInput.value = [questionInput.value.trim(), question].filter(Boolean).join("\n\n");
+        for (const context of sentContexts) {
+          if (!contexts.some(item => JSON.stringify(item) === JSON.stringify(context))) contexts.push(context);
+        }
+        for (const pdf of sentPdfContexts) {
+          if (!pdfContexts.some(item => item.source_id === pdf.source_id && item.page === pdf.page)) pdfContexts.push(pdf);
+        }
+        renderContexts();
+        questionInput.focus();
+        restore.disabled = true;
+      });
+      failure.append(reason, retryButton, restore);
+      pendingElement.appendChild(failure);
+      sessionLabel.textContent = "发送失败，可重试";
     } finally {
+      stopProgress();
       setBusy(false);
       renderThreadControls();
+      refreshPageQuestions();
     }
   }
 
   async function deleteFaq(item, button) {
-    if (!item.id || !window.confirm(`确定删除这条 FAQ？\n\n${item.question}`)) return;
+    if (!item.id || !window.confirm(`确定删除这条 研究笔记？\n\n${item.question}`)) return;
     button.disabled = true;
     button.textContent = "正在删除…";
     try {
@@ -1923,7 +2389,7 @@
       renderFaq({ faq: saved, pending: pendingFaq });
     } catch (error) {
       button.disabled = false;
-      button.textContent = "删除这条 FAQ";
+      button.textContent = "删除这条 研究笔记";
       faqPane.querySelector(".knowledge-faq-list").insertAdjacentHTML("afterbegin", `<div class="knowledge-error">${error.message}</div>`);
     }
   }
@@ -1937,7 +2403,12 @@
     initializedPanel = panel;
     documentId = nextDocumentId;
     documentSha = nextDocumentSha;
-    knowledgeSettings = { model: "gpt-5.6-terra", effort: "medium" };
+    pageQuestions = [];
+    pageQuestionsLoaded = false;
+    pageQuestionsError = "";
+    pageQuestionsRequest += 1;
+    currentPdfContext = null;
+    knowledgeSettings = { model: defaultModel, effort: "medium" };
     knowledgeSettingsTouched = false;
     knowledgeSettingsVersion += 1;
     knowledgeSettingsSave = Promise.resolve();
@@ -1948,21 +2419,35 @@
       };
     }
     try {
-      const bootstrap = await fetch("/api/bootstrap", { cache: "no-store" }).then(response => response.json());
+      const bootstrap = await api("/api/bootstrap");
       token = bootstrap.token;
       taskId = bootstrap.task_id;
       await loadState();
     } catch (error) {
-      sessionLabel.textContent = "知识问答服务未启动；请使用 ./serve.sh。";
+      sessionLabel.textContent = "论文问答服务未启动；请使用 ./serve.sh。";
     }
   }
 
   window.addEventListener("reader:evidence-panel-ready", initializePage);
+  window.addEventListener("reader:pdf-selection", event => {
+    const pdf = validPdfContext(event.detail);
+    const text = String(event.detail?.text || "").slice(0, 6000);
+    if (!pdf || !text || !questionInput || questionInput.disabled) return;
+    const quote = `关于 ${pdf.source_id} 第 ${pdf.page} 页的原文：\n> ${text.replace(/\n/g, "\n> ")}\n\n`;
+    questionInput.value = quote + questionInput.value;
+    if (pdfContexts.length < 6 && !pdfContexts.some(item => item.source_id === pdf.source_id && item.page === pdf.page)) pdfContexts.push(pdf);
+    renderContexts();
+    switchTab("assistant");
+    questionInput.focus();
+  });
+
   window.addEventListener("reader:pdf-context", event => {
     if (event.detail?.sourceId && Number.isFinite(event.detail.page)) {
       currentPdfContext = { source_id: event.detail.sourceId, page: event.detail.page };
+      publishPageQuestions();
     }
   });
+  window.addEventListener("focus", () => { if (documentId && !questionBusy) refreshPageQuestions(); });
   if (typeof document$ !== "undefined") document$.subscribe(initializePage);
   else if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initializePage);
   else initializePage();

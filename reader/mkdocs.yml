@@ -13,9 +13,8 @@ theme:
   language: zh
   font: false
   features:
-    - navigation.instant
-    - navigation.instant.progress
-    - navigation.sections
+    # Each document owns its PDF/chat state. Use full navigation with a
+    # prerendered studio shell until those lifecycles support instant navigation.
     - navigation.top
     - navigation.tracking
     - search.highlight
@@ -70,19 +69,23 @@ markdown_extensions:
       custom_checkbox: true
 
 extra_css:
-  - stylesheets/extra.css?v=20260826-1
+  - stylesheets/document-importance.css?v=20260916-1
+  - stylesheets/extra.css?v=20260920-reading-comfort
   - stylesheets/concept-labs.css?v=20260904-1
-  - stylesheets/knowledge-assistant.css?v=20260901-1
+  - stylesheets/knowledge-assistant.css?v=20260921-paper-qa-location
 
 extra_javascript:
+  - javascripts/reader-api.js?v=20260916-1
   - javascripts/mathjax.js?v=20260908-navigation-1
   - javascripts/external-links.js?v=20260820-1
-  - javascripts/evidence-panel.js?v=20260907-astra-1
+  - javascripts/evidence-panel.js?v=20260921-paper-qa-location
   - vendor/markdown-it.min.js?v=15.0.1
   - vendor/markdown-it-texmath.js?v=1.0.0
-  - javascripts/knowledge-assistant.js?v=20260907-astra-1
-  - javascripts/reader-layout.js?v=20260818-6
-  - javascripts/concept-labs.js?v=20260904-2
+  - javascripts/knowledge-assistant.js?v=20260921-paper-qa-location
+  - javascripts/reader-appearance.js?v=20260920-reading-comfort
+  - javascripts/reader-layout.js?v=20260920-reading-comfort
+  - javascripts/document-importance.js?v=20260916-2
+  - javascripts/concept-labs.js?v=20260919-swa-exact
   - vendor/mathjax/tex-mml-chtml.js
 
 extra:

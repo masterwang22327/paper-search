@@ -1,0 +1,26 @@
+<aside class="evidence-panel reader-studio" data-reader-active-pane="translation" aria-label="论文阅读工作台" aria-hidden="{{ "false" if reader_evidence else "true" }}">
+      <header class="reader-studio-bar">
+        <div class="evidence-panel__identity"><div class="evidence-panel__title">{{ (reader_evidence.get("data-source-title") or "论文阅读") | e }}</div><div class="evidence-panel__meta">{% if reader_evidence %}{{ (reader_evidence.get("data-source-id") or "固定来源") | e }} · PDF 第 {{ (reader_evidence.get("data-page") or "1") | e }} 页{% endif %}</div></div>
+        <nav class="evidence-panel__tabs" aria-label="右栏内容，再次点击可收起">
+          <button type="button" class="evidence-panel__tab" data-reader-tab="insight" aria-pressed="false">解析</button>
+          <button type="button" class="evidence-panel__tab" data-reader-tab="translation" aria-pressed="false">译文</button>
+          <button type="button" class="evidence-panel__tab" data-reader-tab="assistant" aria-pressed="false">论文问答</button>
+          <button type="button" class="evidence-panel__tab" data-reader-tab="faq" aria-pressed="false">研究笔记</button>
+        </nav>
+        <div class="reader-layout-control" role="group" aria-label="阅读布局">
+          <span class="reader-layout-label">布局</span>
+          <div class="reader-view-switch">
+            <button type="button" data-reader-columns="1" aria-pressed="true" title="单栏：只看原文档"><span class="reader-view-icon" aria-hidden="true"></span>单栏</button>
+            <button type="button" data-reader-columns="2" aria-pressed="false" title="双栏：原文档与 PDF"><span class="reader-view-icon" aria-hidden="true"></span>双栏</button>
+            <button type="button" data-reader-columns="3" aria-pressed="false" title="三栏：原文档、PDF 与右栏"><span class="reader-view-icon" aria-hidden="true"></span>三栏</button>
+          </div>
+        </div>
+      </header>
+      <button class="reader-document-splitter" type="button" role="separator" aria-label="调整文档与论文区宽度；双击恢复" aria-orientation="vertical" aria-valuemin="20" aria-valuemax="45" aria-valuenow="30"></button>
+      <div class="evidence-panel__panes">
+        <div class="evidence-panel__pane is-active" data-reader-pane="pdf"><iframe class="evidence-panel__frame" title="论文原文" loading="lazy"></iframe></div>
+        <button class="reader-splitter" type="button" role="separator" aria-label="调整原文与右栏宽度；双击恢复" aria-orientation="vertical" aria-valuemin="35" aria-valuemax="70" aria-valuenow="54"></button>
+        <div class="evidence-panel__pane" data-reader-pane="assistant"></div>
+        <div class="evidence-panel__pane" data-reader-pane="faq"></div>
+      </div>
+</aside>

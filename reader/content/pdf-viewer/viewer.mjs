@@ -1,6 +1,8 @@
 import * as pdfjsLib from "../vendor/pdfjs/pdf.mjs";
-import { locateBlocks, locationLabel } from "./source-locator.mjs";
-import { createPageInsight } from "./page-insight.mjs?v=20260908-aligned-3";
+import { locateBlocks, locationLabel, locateCitationQuote } from "./source-locator.mjs";
+import { renderTranslationMath } from "./translation-math.mjs";
+import { createPageQuestions } from "./page-questions.mjs";
+import { createPageInsight } from "./page-insight.mjs?v=20260928-model-settings";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   "../vendor/pdfjs/pdf.worker.mjs",
@@ -8,9 +10,29 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
 ).href;
 
 const params = new URLSearchParams(window.location.search);
+const embedded = params.get("embedded") === "1";
+document.body.classList.toggle("reader-embedded", embedded);
+if (embedded) {
+  const column = document.createElement("section");
+  column.className = "pdf-column";
+  column.setAttribute("aria-label", "论文 PDF");
+  const viewport = document.querySelector("#viewport");
+  viewport.before(column);
+  column.append(document.querySelector(".toolbar"), document.querySelector("#pdf-search"), viewport);
+}
+for (const settings of document.querySelectorAll(".translation-options, .insight-options")) {
+  settings.addEventListener("keydown", event => {
+    if (event.key === "Escape") { settings.open = false; settings.querySelector("summary").focus(); }
+  });
+}
+
 const file = params.get("file");
 const sourceId = params.get("source_id") || "";
-const citationLocator = (params.get("locator") || "").trim();
+const pageQuestions = createPageQuestions({ sourceId, embedded, onNavigate: page => scrollToPage(page) });
+let citationQuote = (params.get("quote") || "").trim();
+let citationGeneration = 0;
+let citationLocator = (params.get("locator") || "").trim();
+const openTranslationOnLoad = params.get("translation") === "1";
 let pageNumber = Math.max(1, Number.parseInt(params.get("page") || "1", 10));
 let scaleMode = "fit";
 let manualScale = 1;
@@ -27,9 +49,11 @@ let translationBusy = false;
 let translationRequestId = 0;
 let translationStateController;
 let translationPanelOpen = false;
-let translationPanelDismissed = false;
+let translationPanelDismissed = embedded;
 let renderedTranslation = null;
 let renderedTranslationPage = 0;
+let translationScroll = 0;
+let sidePane = "pdf";
 let fullTranslationRunning = false;
 let fullTranslationStopRequested = false;
 let fullTranslationTimer;
@@ -88,7 +112,7 @@ const translationEffortKey = "research-reader-translation-effort";
 const legacyTranslationModelKey = "research-reader-translation-retranslation-model";
 const legacyTranslationEffortKey = "research-reader-translation-retranslation-effort";
 const fullTranslationConcurrency = 16;
-const revisionModels = new Set(["gpt-5.6-terra", "gpt-5.6-sol", "gpt-6-astra"]);
+const revisionModels = new Set(["gpt-6.1-sol", "gpt-6-astra"]);
 const revisionReasoningEfforts = new Set(["low", "medium", "high", "xhigh", "max", "ultra"]);
 const combiningMathDisplayReplacements = new Map([
   ["\u20d0", "↼"],
@@ -165,7 +189,7 @@ const pageInsight = createPageInsight({
     requestAnimationFrame(() => {
       updatePageLayouts();
       renderNearPage(targetPage);
-      scrollToPage(targetPage);
+      suspendPageDetectionUntilSettled();
     });
   }
 });
@@ -280,12 +304,12 @@ function overlayRectangle(record, box) {
 function updateBlockOverlay(record) {
   if (!record?.blockOverlay) return;
   record.blockOverlay.replaceChildren();
-  if (Array.isArray(record.citationBox)) {
-    const rectangle = overlayRectangle(record, record.citationBox);
+  for (const box of record.citationBoxes || (record.citationBox ? [record.citationBox] : [])) {
+    const rectangle = overlayRectangle(record, box);
     if (rectangle) {
       const marker = document.createElement("div");
       marker.className = "pdf-citation-highlight";
-      marker.title = `引用位置：${citationLocator}`;
+      marker.title = `引用原文：${citationLocator || "段落"}`;
       marker.style.left = `${rectangle.left}px`;
       marker.style.top = `${rectangle.top}px`;
       marker.style.width = `${rectangle.width}px`;
@@ -327,23 +351,38 @@ function locatorPattern(locator) {
 }
 
 async function locateCitation(record) {
-  if (!citationLocator || record.number !== pageNumber || Array.isArray(record.citationBox)) return;
-  const pattern = locatorPattern(citationLocator);
-  if (!pattern) return;
+  if ((!citationLocator && !citationQuote) || record.number !== pageNumber || record.citationBox) return;
+  const generation = citationGeneration;
+  const quote = citationQuote;
+  const locator = citationLocator;
   record.textContentPromise ||= record.page.getTextContent();
   const content = await record.textContentPromise;
-  const item = content.items.find(candidate => pattern.test(String(candidate.str || "")));
-  if (!item) return;
-  const x = item.transform[4];
-  const baseline = item.transform[5];
-  const height = item.height || Math.hypot(item.transform[2], item.transform[3]);
-  record.citationBox = [x, baseline, x + item.width, baseline + height];
+  if (generation !== citationGeneration || record.number !== pageNumber) return;
+  let boxes = quote ? locateCitationQuote(content.items, quote) : null;
+  // A numbered locator alone is weaker than an exact excerpt. Never substitute
+  // a heading/nearby equation for an excerpt that could not be located.
+  if (!quote) {
+    const equation = locator.match(/^(?:eq(?:uation)?\.?|公式)\s*\(?([\d]+[a-z]?)\)?$/i);
+    const pattern = equation ? new RegExp(`^\\s*\\(${equation[1]}\\)\\s*$`, "i") : locatorPattern(locator);
+    const matches = pattern ? content.items.filter(item => pattern.test(String(item.str || ""))) : [];
+    if (matches.length === 1) {
+      const item = matches[0];
+      const height = item.height || Math.hypot(item.transform[2], item.transform[3]);
+      boxes = [[item.transform[4], item.transform[5], item.transform[4] + item.width, item.transform[5] + height]];
+    }
+  }
+  if (!boxes) {
+    showStatusHint("已到引用页；文字层无法唯一匹配原文，请按引用位置核对。");
+    return;
+  }
+  record.citationBoxes = boxes;
+  record.citationBox = boxes[0];
   updateBlockOverlay(record);
   if (!citationCentered) {
     citationCentered = true;
-    centerPdfBox(record, record.citationBox, "auto");
+    centerPdfBox(record, boxes[0], "auto");
   }
-  showStatusHint(`已定位引用：${citationLocator}`);
+  showStatusHint(`已框选${quote ? "引用原文" : "引用编号"}${locator ? "：" + locator : ""}`);
 }
 
 function selectRenderedBlock(blockId) {
@@ -515,10 +554,17 @@ function makeTranslationBlock(block) {
   const location = document.createElement("span");
   location.className = `translation-block__location is-${block.location_match === "visual-text-fuzzy" ? "fuzzy" : (Array.isArray(block.bbox) ? "exact" : "page")}`;
   location.textContent = locationLabel(block);
-  label.append(natural, technical, confidence, location);
+  label.append(natural, location);
+  const details = document.createElement("details");
+  details.className = "translation-block__details";
+  const summary = document.createElement("summary");
+  summary.textContent = "译文信息";
+  details.append(summary, technical, confidence);
+  details.addEventListener("click", event => event.stopPropagation());
+  details.addEventListener("keydown", event => event.stopPropagation());
   const text = document.createElement("div");
-  text.textContent = readableMathText(block.translation || "");
-  article.append(label, text);
+  renderTranslationMath(text, readableMathText(block.translation || ""));
+  article.append(label, text, details);
   const structure = block.table_data
     ? makeTableData(block.table_data)
     : (block.figure_data ? makeFigureData(block.figure_data) : null);
@@ -619,10 +665,10 @@ function updateTranslationControls() {
   translateAllButton.disabled = unavailable || translationBusy || fullTranslationStopRequested || fullComplete;
 }
 
-function setTranslationPanel(open, manual = false) {
+function setTranslationPanel(open, manual = false, anchor = captureViewportAnchor()) {
   if (open) pageInsight.close();
-  const changed = translationPanelOpen !== open;
   const targetPage = pageNumber;
+  if (translationPanelOpen && !open) translationScroll = translationContent.scrollTop;
   if (manual && !open) translationPanelDismissed = true;
   if (open) translationPanelDismissed = false;
   translationPanelOpen = open;
@@ -638,10 +684,10 @@ function setTranslationPanel(open, manual = false) {
   if (scrollFrame) cancelAnimationFrame(scrollFrame);
   scrollFrame = null;
   requestAnimationFrame(() => {
-    updatePageLayouts();
+    updatePageLayouts(anchor);
+    if (open) translationContent.scrollTop = translationScroll;
     renderNearPage(targetPage);
-    if (changed) scrollToPage(targetPage);
-    else suspendPageDetectionUntilSettled();
+    suspendPageDetectionUntilSettled();
   });
 }
 
@@ -651,6 +697,7 @@ function renderTranslation(value, sourceText = "", { preserveScroll = false } = 
   renderedTranslationPage = pageNumber;
   translationTitle.textContent = `PDF 第 ${pageNumber} 页 · 中文译文`;
   translationContent.classList.remove("is-refreshing");
+  window.MathJax?.typesetClear?.([translationContent]);
   translationContent.innerHTML = "";
   translationContent.scrollTop = previousScrollTop;
   const currentRecord = pageRecords[pageNumber - 1];
@@ -724,7 +771,7 @@ async function loadTranslationState({ preserveScroll = false } = {}) {
     );
     if (requestId !== translationRequestId) return;
     if (state.translation) {
-      if (!translationPanelDismissed) setTranslationPanel(true);
+      if (!translationPanelDismissed && (!embedded || sidePane === "translation")) setTranslationPanel(true);
       renderTranslation(state.translation, state.source_text, { preserveScroll });
     } else if (translationPanelOpen) {
       renderTranslation(null, state.source_text, { preserveScroll });
@@ -1021,6 +1068,7 @@ function resetTranslationWidth() {
 }
 
 function beginPdfPan(event) {
+  if (document.body.classList.contains("pdf-text-mode")) return;
   if (event.pointerType !== "mouse" || event.button !== 0 || !event.isPrimary) return;
   const bounds = viewportElement.getBoundingClientRect();
   const scrollbarWidth = viewportElement.offsetWidth - viewportElement.clientWidth;
@@ -1087,6 +1135,7 @@ function updateUrl() {
 }
 
 function updateControls() {
+  pageQuestions.setPage(pageNumber);
   pageInsight.setPage(pageNumber);
   pageInput.value = String(pageNumber);
   previousButton.disabled = pageNumber <= 1;
@@ -1094,6 +1143,7 @@ function updateControls() {
   if (fileUrl) openOriginal.href = `${fileUrl.href}#page=${pageNumber}`;
   const record = pageRecords[pageNumber - 1];
   if (record) zoomLabel.textContent = `${Math.round(scaleFor(record) * 100)}%`;
+  notifyParentControls();
 }
 
 function setCurrentPage(value, notify = true) {
@@ -1105,7 +1155,7 @@ function setCurrentPage(value, notify = true) {
   updateControls();
   updateUrl();
   if (changed) pruneDistantPages();
-  if (changed) loadTranslationState();
+  if (changed) { translationScroll = 0; loadTranslationState(); }
   if (notify) {
     window.parent.postMessage(
       { type: "research-reader-pdf-page", page: pageNumber },
@@ -1123,6 +1173,9 @@ function clearPage(record) {
   record.canvas.width = 1;
   record.canvas.height = 1;
   record.blockOverlay?.replaceChildren();
+  record.textLayer?.cancel();
+  record.textLayerElement?.remove();
+  record.textLayer = null;
 }
 
 function pruneDistantPages() {
@@ -1169,6 +1222,7 @@ async function renderPageOnce(record) {
     }
     nextCanvas.classList.add("is-rendered");
     record.element.replaceChildren(nextCanvas, record.blockOverlay);
+    await renderTextLayer(record, displayViewport, generation);
     record.canvas = nextCanvas;
     record.renderedScale = cssScale;
     updateBlockOverlay(record);
@@ -1200,7 +1254,36 @@ function renderNearPage(number) {
   }
 }
 
-function updatePageLayouts() {
+// Store a point on the paper, not a pixel offset in the entire page flow.
+// That point remains at the viewport center when scale or available space changes.
+function captureViewportAnchor(width = viewportElement.clientWidth, height = viewportElement.clientHeight) {
+  if (width <= 1 || height <= 1 || !pageRecords.length) return null;
+  const centerY = viewportElement.scrollTop + height / 2;
+  const record = pageRecords.find(record => record.element.offsetTop + record.element.offsetHeight > centerY)
+    || pageRecords[pageRecords.length - 1];
+  if (!record.element.offsetWidth || !record.element.offsetHeight) return null;
+  return {
+    page: record.number,
+    x: (viewportElement.scrollLeft + width / 2 - record.element.offsetLeft) / record.element.offsetWidth,
+    y: (centerY - record.element.offsetTop) / record.element.offsetHeight
+  };
+}
+
+function restoreViewportAnchor(anchor) {
+  const record = pageRecords[(anchor?.page || 0) - 1];
+  if (!record || viewportElement.clientHeight <= 1) return;
+  suspendPageDetectionUntilSettled();
+  viewportElement.scrollTo({
+    left: record.element.offsetLeft + anchor.x * record.element.offsetWidth - viewportElement.clientWidth / 2,
+    top: record.element.offsetTop + anchor.y * record.element.offsetHeight - viewportElement.clientHeight / 2,
+    behavior: "instant"
+  });
+  // Do not apply the same size change again in the following ResizeObserver.
+  viewportWidth = viewportElement.clientWidth;
+  viewportHeight = viewportElement.clientHeight;
+}
+
+function updatePageLayouts(anchor = captureViewportAnchor()) {
   for (const record of pageRecords) {
     const scale = scaleFor(record);
     const width = Math.floor(record.baseViewport.width * scale);
@@ -1218,6 +1301,8 @@ function updatePageLayouts() {
   }
   const current = pageRecords[pageNumber - 1];
   if (current) zoomLabel.textContent = `${Math.round(scaleFor(current) * 100)}%`;
+  restoreViewportAnchor(anchor);
+  notifyParentControls();
 }
 
 function scrollToPage(value, behavior = "auto") {
@@ -1306,10 +1391,12 @@ function scheduleCurrentPageDetection() {
 function zoom(factor) {
   const current = pageRecords[pageNumber - 1];
   if (!current) return;
+  const anchor = captureViewportAnchor();
+  const previousScale = scaleFor(current);
   scaleMode = "manual";
-  manualScale = Math.min(4, Math.max(0.35, scaleFor(current) * factor));
-  updatePageLayouts();
-  scrollToPage(pageNumber);
+  manualScale = Math.min(4, Math.max(0.35, previousScale * factor));
+  updatePageLayouts(anchor);
+  renderNearPage(pageNumber);
 }
 
 async function buildPageFlow() {
@@ -1370,9 +1457,10 @@ pageInput.addEventListener("keydown", event => {
 document.querySelector("#zoom-out").addEventListener("click", () => zoom(0.85));
 document.querySelector("#zoom-in").addEventListener("click", () => zoom(1.18));
 document.querySelector("#fit-width").addEventListener("click", () => {
+  const anchor = captureViewportAnchor();
   scaleMode = "fit";
-  updatePageLayouts();
-  scrollToPage(pageNumber);
+  updatePageLayouts(anchor);
+  renderNearPage(pageNumber);
 });
 translationToggleButton.addEventListener("click", () => {
   if (translationPanelOpen) {
@@ -1388,13 +1476,13 @@ translateAllButton.addEventListener("click", () => translateAllPages(false));
 retranslatePageButton.addEventListener("click", () => translateCurrentPage(true));
 closeTranslationButton.addEventListener("click", () => setTranslationPanel(false, true));
 function syncTranslationReasoningOptions() {
-  const astra = retranslationModelSelect.value === "gpt-6-astra";
+  const gpt6 = retranslationModelSelect.value.startsWith("gpt-6");
   for (const option of retranslationEffortSelect.options) {
-    option.disabled = astra ? option.value === "ultra" : option.value === "low";
+    option.disabled = gpt6 && option.value === "ultra";
     option.hidden = option.disabled;
   }
   if (!retranslationEffortSelect.value || retranslationEffortSelect.selectedOptions[0].disabled) {
-    retranslationEffortSelect.value = astra && retranslationEffortSelect.value === "ultra" ? "max" : "medium";
+    retranslationEffortSelect.value = gpt6 && retranslationEffortSelect.value === "ultra" ? "max" : "medium";
   }
 }
 
@@ -1424,9 +1512,11 @@ new ResizeObserver(() => {
   const visibilityChanged = visible !== viewportVisible;
   const sizeChanged = nextWidth !== viewportWidth || nextHeight !== viewportHeight;
   if (!visibilityChanged && !sizeChanged) return;
+  const anchor = visible && viewportVisible ? captureViewportAnchor(viewportWidth, viewportHeight) : null;
   viewportVisible = visible;
   viewportWidth = nextWidth;
   viewportHeight = nextHeight;
+  document.querySelector("#expand-comparison").hidden = !translationPanelOpen || nextWidth >= 420 || window.parent === window;
   pageDetectionSuspended = true;
   pageDetectionGeneration += 1;
   if (scrollFrame) cancelAnimationFrame(scrollFrame);
@@ -1438,14 +1528,18 @@ new ResizeObserver(() => {
   }
   if (!pdfDocument) return;
   if (scaleMode === "fit") {
-    updatePageLayouts();
+    updatePageLayouts(anchor);
     renderNearPage(pageNumber);
   }
+  if (scaleMode !== "fit") restoreViewportAnchor(anchor);
   if (!visibilityChanged) {
     suspendPageDetectionUntilSettled();
     return;
   }
-  scrollToPage(pageNumber);
+  // Showing a hidden iframe restores its native scroll offsets. Navigating to
+  // the page here would overwrite both the horizontal and within-page position.
+  renderNearPage(pageNumber);
+  suspendPageDetectionUntilSettled();
   if (readerToken) {
     loadTranslationState({ preserveScroll: true });
     refreshFullTranslationJob();
@@ -1465,10 +1559,9 @@ window.addEventListener("resize", () => {
     }
     if (scaleMode === "fit") {
       updatePageLayouts();
-      scrollToPage(pageNumber);
-    } else {
-      suspendPageDetectionUntilSettled();
+      renderNearPage(pageNumber);
     }
+    suspendPageDetectionUntilSettled();
   }, 120);
 });
 
@@ -1509,7 +1602,7 @@ async function start() {
       || localStorage.getItem(legacyTranslationModelKey);
     const savedEffort = localStorage.getItem(translationEffortKey)
       || localStorage.getItem(legacyTranslationEffortKey);
-    retranslationModelSelect.value = revisionModels.has(savedModel) ? savedModel : "gpt-5.6-terra";
+    retranslationModelSelect.value = revisionModels.has(savedModel) ? savedModel : "gpt-6.1-sol";
     retranslationEffortSelect.value = revisionReasoningEfforts.has(savedEffort) ? savedEffort : "medium";
     syncTranslationReasoningOptions();
     localStorage.setItem(translationModelKey, retranslationModelSelect.value);
@@ -1523,6 +1616,7 @@ async function start() {
     updateControls();
     updateTranslationControls();
     pageInsight.setReady(Boolean(readerToken));
+    if (openTranslationOnLoad && readerToken) setTranslationPanel(true);
     if (scrollFrame) cancelAnimationFrame(scrollFrame);
     scrollFrame = null;
     scrollToPage(initialPage);
@@ -1536,4 +1630,192 @@ async function start() {
   }
 }
 
-start();
+let searchGeneration = 0;
+let searchHits = [];
+let searchIndex = -1;
+let selectedPdfText = "";
+let selectedPdfPage = 1;
+const searchForm = document.querySelector("#pdf-search");
+const searchQuery = document.querySelector("#search-query");
+const searchStatus = document.querySelector("#search-status");
+
+async function renderTextLayer(record, viewport, generation) {
+  record.textLayer?.cancel();
+  record.textContentPromise ||= record.page.getTextContent();
+  const content = await record.textContentPromise;
+  if (record.generation !== generation) return;
+  const container = document.createElement("div");
+  container.className = "textLayer";
+  container.style.setProperty("--total-scale-factor", String(viewport.scale));
+  record.textLayerElement = container;
+  const layer = new pdfjsLib.TextLayer({ textContentSource: content, container, viewport });
+  record.textLayer = layer;
+  try { await layer.render(); }
+  catch (error) { if (error?.name !== "AbortException") throw error; return; }
+  if (record.generation !== generation) return;
+  record.element.appendChild(container);
+  highlightSearch(record);
+}
+
+function highlightSearch(record) {
+  const hit = searchHits[searchIndex];
+  let offset = 0;
+  for (const span of record.textLayerElement?.querySelectorAll("span") || []) {
+    const start = offset;
+    offset += span.textContent.length + 1;
+    span.classList.toggle("pdf-search-match", Boolean(hit && hit.page === record.number && start < hit.end && offset - 1 > hit.start));
+  }
+}
+
+async function showSearchHit(index) {
+  if (!searchHits.length) return;
+  searchIndex = (index + searchHits.length) % searchHits.length;
+  const hit = searchHits[searchIndex];
+  const generation = searchGeneration;
+  const selected = searchIndex;
+  scrollToPage(hit.page);
+  const record = pageRecords[hit.page - 1];
+  await renderPage(record);
+  if (generation !== searchGeneration || selected !== searchIndex) return;
+  pageRecords.forEach(highlightSearch);
+  const marker = record.textLayerElement?.querySelector(".pdf-search-match");
+  if (marker) {
+    // Cancel page-top anchoring before centering the match.
+    suspendPageDetectionUntilSettled();
+    const box = marker.getBoundingClientRect();
+    const bounds = viewportElement.getBoundingClientRect();
+    viewportElement.scrollBy({ left: box.left + box.width / 2 - bounds.left - bounds.width / 2,
+      top: box.top + box.height / 2 - bounds.top - bounds.height / 2, behavior: "instant" });
+  }
+  searchStatus.textContent = `${searchIndex + 1} / ${searchHits.length} · 第 ${hit.page} 页`;
+}
+
+searchForm.addEventListener("submit", async event => {
+  event.preventDefault();
+  const query = searchQuery.value.trim().toLocaleLowerCase();
+  const generation = ++searchGeneration;
+  searchHits = [];
+  searchIndex = -1;
+  pageRecords.forEach(highlightSearch);
+  if (!query) { searchStatus.textContent = "请输入关键词"; return; }
+  searchStatus.textContent = "正在搜索…";
+  try {
+    const hits = [];
+    for (const record of pageRecords) {
+      record.textContentPromise ||= record.page.getTextContent();
+      const content = await record.textContentPromise;
+      if (generation !== searchGeneration) return;
+      const text = content.items.filter(item => item.str).map(item => item.str).join(" ").toLocaleLowerCase();
+      for (let at = text.indexOf(query); at >= 0; at = text.indexOf(query, at + query.length)) {
+        hits.push({ page: record.number, start: at, end: at + query.length });
+      }
+    }
+    searchHits = hits;
+    if (hits.length) await showSearchHit(0);
+    else searchStatus.textContent = "未找到匹配文字（扫描图片可能没有文字层）";
+  } catch { searchStatus.textContent = "搜索失败，请重试"; }
+});
+document.querySelector("#search-next").addEventListener("click", () => showSearchHit(searchIndex + 1));
+document.querySelector("#search-previous").addEventListener("click", () => showSearchHit(searchIndex - 1));
+function toggleSearch(open) {
+  searchForm.hidden = !open;
+  document.querySelector("#search-toggle").setAttribute("aria-expanded", String(open));
+  if (open) searchQuery.focus();
+  else { ++searchGeneration; searchHits = []; pageRecords.forEach(highlightSearch); }
+}
+document.querySelector("#search-toggle").addEventListener("click", () => toggleSearch(searchForm.hidden));
+document.querySelector("#search-close").addEventListener("click", () => toggleSearch(false));
+document.addEventListener("keydown", event => {
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") { event.preventDefault(); toggleSearch(true); }
+  if (event.key === "Escape" && !searchForm.hidden) { event.preventDefault(); toggleSearch(false); }
+});
+document.querySelector("#text-mode").addEventListener("click", event => {
+  const selecting = document.body.classList.toggle("pdf-text-mode");
+  event.currentTarget.setAttribute("aria-pressed", String(selecting));
+  event.currentTarget.textContent = selecting ? "拖动浏览" : "选择文字";
+  if (!selecting) window.getSelection()?.removeAllRanges();
+});
+document.addEventListener("selectionchange", () => {
+  const selection = window.getSelection();
+  const node = selection?.anchorNode?.parentElement?.closest(".textLayer");
+  selectedPdfText = node ? selection.toString().trim().slice(0, 6000) : "";
+  selectedPdfPage = Number(node?.closest(".pdf-page")?.dataset.page || pageNumber);
+  document.querySelector("#pdf-selection-actions").hidden = !selectedPdfText;
+});
+document.querySelector("#copy-selection").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText(selectedPdfText); document.querySelector("#pdf-selection-actions span").textContent = "已复制"; }
+  catch { document.querySelector("#pdf-selection-actions span").textContent = "可按 ⌘C / Ctrl+C 复制"; }
+});
+document.querySelector("#ask-selection").addEventListener("click", () => {
+  if (!selectedPdfText) return;
+  window.parent.postMessage({ type: "reader:pdf-selection", source_id: sourceId, page: selectedPdfPage, text: selectedPdfText }, location.origin);
+});
+document.querySelector("#expand-comparison").addEventListener("click", () => {
+  window.parent.postMessage({ type: "reader:expand-translation" }, location.origin);
+});
+
+function notifyParentControls() {
+  if (embedded) window.parent.postMessage({ type: "reader:pdf-controls" }, location.origin);
+}
+
+window.ReaderPdf = {
+  controls() {
+    return { ready: Boolean(pdfDocument && pageRecords.length), page: pageNumber,
+      pages: pdfDocument?.numPages || 0, zoom: zoomLabel.textContent,
+      selecting: document.body.classList.contains("pdf-text-mode") };
+  },
+  command(name, value) {
+    if (name === "page") scrollToPage(value);
+    else document.getElementById(name)?.click();
+    notifyParentControls();
+  },
+  setSidePane(name, anchor = captureViewportAnchor(), share = 54) {
+    const changed = sidePane !== name;
+    sidePane = name;
+    document.body.dataset.sidePane = name;
+    document.body.style.setProperty("--paper-share", `${share}%`);
+    if (changed) {
+      pageInsight.close();
+      setTranslationPanel(name === "translation", true, anchor);
+      if (name === "insight") pageInsight.open();
+      if (name === "translation" && renderedTranslationPage !== pageNumber) loadTranslationState({ preserveScroll: true });
+    }
+    requestAnimationFrame(() => {
+      updatePageLayouts(anchor);
+      renderNearPage(pageNumber);
+    });
+  },
+  sourceId,
+  snapshot() { return { page: pageNumber, scaleMode, manualScale, anchor: captureViewportAnchor(), translation: translationPanelOpen }; },
+  async navigate({ page, locator = "", quote = "", translation, restore } = {}) {
+    await window.ReaderPdf.ready;
+    if (!pdfDocument || !pageRecords.length) return false;
+    if (restore) {
+      scaleMode = restore.scaleMode;
+      manualScale = restore.manualScale;
+      updatePageLayouts(null);
+    }
+    citationGeneration++;
+    citationQuote = quote;
+    citationLocator = locator;
+    citationCentered = false;
+    for (const record of pageRecords) {
+      record.citationBox = null;
+      record.citationBoxes = null;
+      updateBlockOverlay(record);
+    }
+    scrollToPage(page || restore?.page || pageNumber);
+    if (typeof translation === "boolean") setTranslationPanel(translation, true);
+    else if (restore && !embedded) setTranslationPanel(restore.translation, true);
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    if (restore?.anchor && !locator && !quote && Number(page || restore.page) === restore.page) {
+      restoreViewportAnchor(restore.anchor);
+    }
+    const record = pageRecords[pageNumber - 1];
+    await renderPage(record);
+    await locateCitation(record);
+    return true;
+  },
+  setTranslationPanel
+};
+window.ReaderPdf.ready = start().then(() => notifyParentControls());

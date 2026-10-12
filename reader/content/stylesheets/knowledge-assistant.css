@@ -1,3 +1,8 @@
+/* CHTML glyphs are generated content and receive no native selection paint. */
+article .reader-math-selected mjx-math {
+  background-color: rgba(128, 128, 128, 0.28);
+}
+
 .knowledge-assistant {
   height: 100%;
   display: flex;
@@ -121,6 +126,39 @@
 
 .knowledge-message.is-pending {
   opacity: 0.72;
+}
+
+.knowledge-message__progress {
+  display: block;
+  margin-top: 0.35rem;
+  color: var(--md-default-fg-color--light);
+  font-size: 0.74rem;
+  line-height: 1.45;
+}
+
+.knowledge-message__progress small {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.68rem;
+}
+
+.knowledge-message__progress > span::before {
+  content: "";
+  display: inline-block;
+  width: 0.45rem;
+  height: 0.45rem;
+  margin-right: 0.35rem;
+  border-radius: 50%;
+  background: currentColor;
+  animation: knowledge-progress-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes knowledge-progress-pulse {
+  50% { opacity: 0.25; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .knowledge-message__progress > span::before { animation: none; }
 }
 
 .knowledge-message__body {
@@ -522,6 +560,19 @@
 
 .knowledge-model-settings {
   flex: 1 1 13rem;
+  flex-wrap: wrap;
+}
+
+.knowledge-model-settings label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+  font-size: 0.7rem;
+}
+
+.knowledge-model-settings label > span {
+  white-space: nowrap;
 }
 
 .knowledge-model-settings select {
@@ -848,6 +899,89 @@ body.reader-modal-open {
 
 .reader-revision-editor__dialog h3,
 .reader-revision-editor__dialog h4 { margin-top: 0; }
+
+/* AI revisions remain beside the reader without a backdrop or scroll lock. */
+.reader-revision-editor--side {
+  inset: var(--reader-bar-height, 52px) 0 0 auto;
+  display: block;
+  width: min(464px, 100vw);
+  padding: 0;
+  background: transparent;
+}
+
+.reader-revision-editor--side .reader-revision-editor__dialog {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  max-height: 100%;
+  overflow: hidden;
+  padding: 16px;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 0;
+  box-shadow: none;
+  overscroll-behavior: contain;
+}
+
+.reader-revision-editor--side .reader-revision-editor__header,
+.reader-revision-editor--side .reader-revision-editor__preview,
+.reader-revision-editor--side .reader-revision-editor__actions { flex: none; }
+
+/* Before the first reply, the question uses the column's remaining height. */
+.reader-revision-editor--side:not(.is-collapsed) .reader-revision-editor__dialog:not(.has-discussion) .reader-revision-editor__controls,
+.reader-revision-editor--side:not(.is-collapsed) .reader-revision-editor__dialog:not(.has-discussion) .reader-revision-editor__controls > label {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.reader-revision-editor--side:not(.is-collapsed) .reader-revision-editor__dialog:not(.has-discussion) .reader-revision-editor__controls textarea {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  max-height: none;
+  resize: none;
+}
+
+.reader-revision-editor__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.reader-revision-editor__header h3 { margin: 0 0 0.35rem; }
+.reader-revision-editor__status {
+  color: var(--md-default-fg-color--light);
+  font-size: 0.68rem;
+}
+
+.reader-revision-editor__header button {
+  flex: none;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 0.3rem;
+  color: var(--md-default-fg-color);
+  background: var(--md-default-bg-color);
+  cursor: pointer;
+}
+
+.reader-revision-editor--side.is-collapsed { bottom: auto; width: min(320px, 100vw); }
+.reader-revision-editor--side.is-collapsed .reader-revision-editor__dialog { height: auto; padding: 0.7rem; }
+.reader-revision-editor--side.is-collapsed .reader-revision-editor__dialog > :not(header) { display: none; }
+
+@media (min-width: 900px) {
+  body.reader-revision-side-open:has(.reader-revision-editor--side:not(.is-collapsed)) .md-sidebar {
+    display: none;
+  }
+  body.reader-revision-side-open:not(.evidence-panel-open):has(.reader-revision-editor--side:not(.is-collapsed)) .md-main {
+    margin-right: 464px;
+  }
+  body.reader-revision-side-open.evidence-panel-open:has(.reader-revision-editor--side:not(.is-collapsed)) .md-main {
+    max-width: calc(100vw - 464px);
+  }
+}
 
 .reader-revision-editor__controls label {
   display: grid;
@@ -1185,3 +1319,155 @@ body.reader-modal-open {
 .knowledge-error {
   color: #b3261e;
 }
+
+.knowledge-options { flex: none; font-size: 12px; border-bottom: 1px solid var(--studio-line); }
+.knowledge-options summary { cursor: pointer; padding: 8px 16px; color: var(--studio-accent); }
+.knowledge-options[open] .knowledge-model-settings { position: static; min-width: 0; padding: 8px 16px 12px; background: var(--studio-tint); }
+.knowledge-send-failure { border-top: 1px solid #c88; margin-top: .5rem; font-size: .7rem; }
+.knowledge-send-failure button { font: inherit; padding: .3rem .6rem; margin-right: .4rem; border: 1px solid var(--md-default-fg-color--lightest); border-radius: .3rem; cursor: pointer; color: var(--md-primary-fg-color); background: var(--md-default-bg-color); }
+
+.reader-studio :is([data-reader-pane="assistant"], [data-reader-pane="faq"]) { background: var(--studio-tint); color: var(--studio-ink); border-left: 1px solid var(--studio-line); }
+.reader-companion-heading { flex: none; padding: 12px 16px; background: var(--studio-tint); border-bottom: 1px solid var(--studio-line); }
+.reader-companion-eyebrow { display: none; font-size: 11px; letter-spacing: 1.5px; color: var(--studio-accent); font-weight: 650; }
+.reader-companion-heading h2 { margin: 5px 0 4px; color: var(--studio-ink); font-size: 16px; font-weight: 650; letter-spacing: 0; }
+.reader-companion-heading p { display: none; margin: 0; font-size: 12px; color: var(--studio-muted); }
+.reader-studio .knowledge-threadbar { background: transparent; padding: 10px 20px; gap: 6px; }
+.reader-studio .knowledge-threadbar :is(button,select) { background: var(--studio-surface); border-color: var(--studio-line); height: 30px; border-radius: 7px; }
+.reader-studio .knowledge-threadbar [data-action="new-thread"] { color: var(--studio-accent); background: var(--studio-surface); border-color: var(--studio-accent); }
+.reader-studio .knowledge-session { background: transparent; color: var(--studio-muted); max-width: 80px; }
+.reader-studio .knowledge-messages { padding: 14px 16px; }
+.reader-studio .knowledge-message--assistant { width: 100%; max-width: 100%; border: 1px solid var(--studio-line);  background: var(--studio-surface); padding: 14px 16px; border-radius: 5px; box-shadow: none; font-size: 15px; }
+.reader-studio .knowledge-message--user { margin-left: auto; background: color-mix(in srgb, var(--studio-accent) 12%, var(--studio-surface)); color: var(--studio-ink); border-radius: 5px; padding: 14px 18px; }
+.reader-studio .knowledge-composer { padding: 14px 20px; background: color-mix(in srgb, var(--studio-surface) 70%, var(--studio-tint)); border-top: 1px solid var(--studio-line); }
+.reader-studio .knowledge-composer textarea { border: 1px solid var(--studio-line); border-radius: 5px; padding: 12px 14px; background: var(--studio-surface); color: var(--studio-ink); font-size: 14px; }
+.reader-studio .knowledge-composer textarea:focus { border-color: var(--studio-accent); box-shadow: 0 0 0 3px color-mix(in srgb,var(--studio-accent) 12%,transparent); }
+.reader-studio .knowledge-toolbar [data-action="send"] { background: var(--studio-accent); border-color: var(--studio-accent); border-radius: 8px; }
+.reader-studio .knowledge-contexts { background: var(--studio-tint); }
+.reader-studio .knowledge-faq { padding: 0 24px 24px; }
+.reader-studio .knowledge-faq .reader-companion-heading { margin: 0 -24px 20px; }
+.reader-studio .knowledge-faq-search { position: relative; top: 0; margin: 0 0 20px; padding: 0; border: 0; background: transparent; }
+.reader-studio .knowledge-faq-search input { border-radius: 9px; border-color: var(--studio-line); background: var(--studio-surface); }
+.reader-studio .knowledge-faq-list > h3 { font-size: 12px; font-weight: 500; color: var(--studio-muted); }
+.reader-studio .knowledge-faq-item { background: var(--studio-surface); border: 1px solid var(--studio-line); border-left: 2px solid #d9c6a7; border-radius: 4px; padding: 16px 18px; margin-bottom: 14px; box-shadow: none; }
+.reader-studio .knowledge-empty { margin: 20px 0; padding: 30px 24px; border: 1px dashed color-mix(in srgb,var(--studio-accent) 30%,transparent); border-radius: 5px; background: color-mix(in srgb,var(--studio-surface) 65%,transparent); color: var(--studio-muted); line-height: 1.8; }
+@media(max-width:820px) { .reader-companion-heading { padding: 18px; } .reader-studio .knowledge-messages { padding: 14px; } .reader-studio .knowledge-message--assistant { padding: 15px; } .reader-studio .knowledge-threadbar { flex-wrap: wrap; padding: 8px; } .reader-studio .knowledge-threadbar select { min-width: 100%; } }
+
+.reader-studio .knowledge-threadbar { flex-wrap: wrap; padding: 8px 12px; }
+.reader-studio .knowledge-threadbar select { min-width: 100%; }
+
+.reader-studio .knowledge-toolbar { justify-content: flex-end; }
+.knowledge-message.is-question-target { outline: 2px solid #b8893c; outline-offset: -2px; box-shadow: inset 4px 0 #b8893c; }
+.knowledge-mode { display: flex; gap: 4px; padding: 8px 14px 0; }
+.knowledge-mode button { padding: 5px 12px; border: 1px solid var(--md-default-fg-color--lightest); border-radius: 6px; color: var(--md-default-fg-color--light); font-size: 12px; cursor: pointer; }
+.knowledge-mode button[aria-pressed="true"] { color: var(--md-accent-fg-color); background: color-mix(in srgb, var(--md-accent-fg-color) 8%, transparent); border-color: color-mix(in srgb, var(--md-accent-fg-color) 35%, transparent); }
+.knowledge-mode-hint { margin: 6px 14px; font-size: 12px; color: var(--md-default-fg-color--light); line-height: 1.6; }
+.knowledge-explore-label { display: block; margin-bottom: 6px; color: var(--md-default-fg-color--light); }
+/* Compact, inline PDF references in exploration answers. */
+.knowledge-citation { display: inline; width: auto; margin: 0 2px; padding: 1px 4px; font: inherit; font-size: .85em; line-height: inherit; vertical-align: baseline; white-space: nowrap; color: var(--md-accent-fg-color); border: 1px solid color-mix(in srgb, var(--md-accent-fg-color) 25%, transparent); border-radius: 4px; cursor: pointer; background: color-mix(in srgb, var(--md-accent-fg-color) 8%, transparent); }
+.knowledge-citation:hover { background: color-mix(in srgb, var(--md-accent-fg-color) 16%, transparent); text-decoration: underline; }
+.knowledge-citation:focus-visible { outline: 2px solid var(--md-accent-fg-color); outline-offset: 2px; }
+.knowledge-citation-references { margin-top: 6px; font-size: .9em; color: var(--md-default-fg-color--light); }
+
+/* Keep conversation controls to two rows, including narrow three-column panes. */
+.knowledge-controls { display: flex; align-items: center; gap: 8px; padding: 8px 12px 0; flex: none; }
+.knowledge-controls .knowledge-mode { padding: 0; flex: none; }
+.knowledge-controls .knowledge-mode button { padding: 5px 8px; }
+.knowledge-controls .knowledge-session { margin-left: auto; min-width: 0; padding: 0; }
+.knowledge-controls .knowledge-options { position: relative; border: 0; }
+.knowledge-controls .knowledge-options summary { padding: 5px 2px; white-space: nowrap; list-style: none; }
+.knowledge-controls .knowledge-options summary::-webkit-details-marker,
+.knowledge-thread-menu summary::-webkit-details-marker { display: none; }
+.knowledge-options-popover,
+.knowledge-thread-menu-popover { position: absolute; top: calc(100% + 6px); z-index: 30; border: 1px solid var(--studio-line); border-radius: 8px; background: var(--studio-surface); box-shadow: 0 8px 24px #0002; }
+.knowledge-options-popover { left: -150px; width: 280px; max-width: calc(100vw - 32px); padding: 6px; }
+.knowledge-controls .knowledge-options[open] .knowledge-model-settings { padding: 8px; background: transparent; flex-wrap: wrap; }
+.knowledge-options-popover .knowledge-mode-hint { margin: 6px 8px; }
+.reader-studio .knowledge-threadbar { flex-wrap: nowrap; padding: 8px 12px; gap: 6px; }
+.reader-studio .knowledge-threadbar select { min-width: 0; width: 0; flex: 1; }
+.knowledge-thread-menu { position: relative; flex: none; }
+.knowledge-thread-menu summary { cursor: pointer; list-style: none; border: 1px solid var(--studio-line); border-radius: 7px; width: 30px; height: 30px; display: grid; place-items: center; font-weight: 700; background: var(--studio-surface); }
+.knowledge-thread-menu-popover { right: 0; min-width: 120px; padding: 5px; }
+.reader-studio .knowledge-thread-menu-popover button { display: block; width: 100%; text-align: left; border: 0; }
+.knowledge-thread-menu-popover button:hover { background: var(--studio-tint); }
+.knowledge-controls summary:focus-visible,
+.knowledge-thread-menu summary:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
+
+/* The reply takes over the same space, with the composer below it. */
+.reader-revision-editor--side .has-discussion .reader-revision-editor__preview {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  margin-top: 12px;
+  padding-right: 4px;
+}
+.reader-revision-editor--side .has-discussion .reader-revision-editor__controls {
+  flex: none;
+  border-top: 1px solid var(--md-default-fg-color--lightest);
+  margin-top: 8px;
+}
+.reader-revision-editor--side .has-discussion .reader-revision-editor__controls label { margin-block: 6px; font-size: 12px; gap: 4px; }
+.reader-revision-editor--side .has-discussion .reader-revision-editor__controls select { padding: 5px 8px; }
+.reader-revision-editor--side .has-discussion .reader-revision-editor__controls textarea { min-height: 70px; height: 70px; max-height: 130px; padding: 8px; }
+.reader-revision-editor--side .has-discussion .reader-revision-editor__controls p { margin: 6px 0; font-size: 11px; }
+.reader-revision-editor--side .has-discussion .reader-revision-editor__actions { flex: none; bottom: 0; padding: 8px 0 0; margin-top: 4px; gap: 6px; }
+.reader-revision-editor--side .has-discussion .reader-revision-editor__actions button { padding: 7px 9px; font-size: 12px; }
+.reader-revision-history-nav { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; position: sticky; top: 0; z-index: 1; padding: 8px 0; background: var(--md-default-bg-color); border-bottom: 1px solid var(--md-default-fg-color--lightest); font-size: 12px; }
+.reader-revision-history-nav strong { flex: 1; white-space: nowrap; }
+.reader-revision-history-nav select { order: 3; width: 100%; min-width: 0; padding: 6px; border: 1px solid var(--md-default-fg-color--lightest); border-radius: 4px; color: var(--md-default-fg-color); background: var(--md-default-bg-color); font: inherit; }
+.reader-revision-history-nav button { cursor: pointer; color: var(--md-primary-fg-color); padding: 4px; }
+.reader-revision-editor__error { color: var(--md-default-fg-color); border-left: 2px solid #c75c46; padding-left: 8px; }
+/* Leave room for both multiline questions and the revision reply. */
+.reader-revision-editor--side .reader-revision-editor__header { align-items: center; gap: 8px; }
+.reader-revision-editor--side .reader-revision-editor__header > div { flex: 1; min-width: 0; }
+.reader-revision-editor--side .reader-revision-editor__header h3 { font-size: 14px; line-height: 1.5; margin: 0; }
+.reader-revision-editor--side .reader-revision-editor__status { display: block; font-size: 11px; line-height: 1.5; }
+.reader-revision-editor--side .reader-revision-editor__header button { padding: 4px 7px; font-size: 12px; }
+.reader-revision-editor--side .has-discussion .reader-revision-editor__preview { margin-top: 6px; }
+.reader-revision-editor--side .reader-revision-editor__controls > label { font-size: 0; gap: 0; margin: 8px 0 0; }
+.reader-revision-editor--side .has-discussion .reader-revision-editor__controls > label { font-size: 0; gap: 0; margin: 6px 0 0; }
+.reader-revision-editor--side .reader-revision-editor__controls textarea,
+.reader-revision-editor--side .has-discussion .reader-revision-editor__controls textarea {
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.6;
+  min-height: 112px;
+  height: 112px;
+  max-height: min(260px, 35dvh);
+  padding: 10px;
+  resize: vertical;
+}
+.reader-revision-editor--side .reader-revision-editor__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: nowrap;
+  overflow: visible;
+  margin-top: 4px;
+  padding: 4px 0 0;
+  border: 0;
+  bottom: 0;
+}
+.reader-revision-editor--side .has-discussion .reader-revision-editor__actions { padding-top: 4px; }
+.reader-revision-settings { position: relative; font-size: 12px; }
+.reader-revision-settings > summary { padding: 6px 0; color: var(--md-default-fg-color--light); cursor: pointer; }
+.reader-revision-settings__panel {
+  position: absolute;
+  z-index: 5;
+  bottom: calc(100% + 8px);
+  left: 0;
+  width: min(330px, calc(100vw - 80px));
+  padding: 12px;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 8px;
+  background: var(--md-default-bg-color);
+  box-shadow: 0 4px 20px #0002;
+}
+.reader-revision-settings__panel .reader-revision-editor__model { gap: 10px; }
+.reader-revision-settings__panel label { display: grid; gap: 6px; font-size: 12px; }
+.reader-revision-settings__panel select { width: 100%; min-width: 0; padding: 6px; border: 1px solid var(--md-default-fg-color--lightest); border-radius: 5px; background: var(--md-default-bg-color); color: var(--md-default-fg-color); font: inherit; }
+.reader-revision-settings__panel > button { margin-top: 12px; }
+.reader-revision-history-nav { flex-wrap: nowrap; padding: 6px 0; gap: 8px; }
+.reader-revision-history-nav strong { flex: none; font-size: 12px; }
+.reader-revision-history-nav select { order: 0; flex: 1; width: 0; padding: 4px; }
+.reader-revision-history-nav button { flex: none; font-size: 11px; }

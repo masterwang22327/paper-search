@@ -8,6 +8,7 @@ These files are pinned locally so the generated reader works without runtime CDN
 | MathJax distribution | 3.2.2 | Apache-2.0 | `mathjax/MathJax` |
 | markdown-it | 15.0.1 | MIT | `markdown-it/markdown-it` |
 | markdown-it-texmath | 1.0.0 | MIT | `goessner/markdown-it-texmath` |
+| Lucide layout icons | 0.468.0 | ISC / MIT | `lucide-icons/lucide` (`lucide-static`) |
 
 ## SHA-256
 

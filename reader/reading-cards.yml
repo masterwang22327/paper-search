@@ -1,38 +1,137 @@
 papers:
+  rule-reward-design-binary-partial-credit.md:
+    level: 项目深化 · 规则奖励设计
+    effort: 先读 20–30 分钟；近期对照、公式与实验方案另读 30 分钟
+    background: MiMo-V2.6 的公开代码任务默认按验收退出码给 0/1，论文与框架还包含质量评分和部分奖励的不同路线。
+    problem: 什么条件下保留二值奖励，什么时候使用部分信用、质量分档或过程反馈，0.1 步长有没有特别意义？
+    legacy: 测试通过率与完整成功概率目标不同；分档可能损失信息，标准差归一化会放大小噪声，评分器错误必须单独处理。
+    team: MiMo、CodeRL、ACE-Coder、VeRPO、RobustTests、Soft-SVeRL 与测试通过率直接对照论文作者。
+    impact: 把默认源码、生产报告、近期正负结果和奖励设计假设放进同一个可追溯比较。
+    value: 能根据全失败、混合与全成功组选择奖励路线，并为现有代码环境设计只改奖励的公平消融。
+    strategy: 先读场景表与 MiMo 层次，再用交互算例检查目标偏差、分档与归一化，最后回查直接对照原文。
+    prerequisites: 程序验收、策略梯度与 GRPO；正文提供最小公式解释
+  mimo-series-technical-lineage.md:
+    level: 阶段 14 现代模型系列 · MiMo 技术路线
+    effort: 先读 45–60 分钟；优先 MiMo-V2.6、分母审计和环境/verifier 部分
+    background: MiMo-V2.6 将大规模 Agentic RL、多个任务环境、harness 和 grader 作为一个训练系统公开。
+    problem: MiMo 从 7B 推理 RL 演变到 V2.6 的多环境异步 RL，哪些是算法、哪些是系统与评测贡献？
+    legacy: 直播曲线和发布页数字是官方声明，不自动等于独立复现；环境成功、grader 分数和策略增益必须分开。
+    team: Xiaomi MiMo team、MiMo-7B、MiMo-VL、MiMo-V2 Flash 与 MiMo-V2.6 官方项目。
+    impact: 将 Group-relative Grader、冻结 Router、多 Harness、异步 rollout、reward-hacking 防御和环境质量放入同一套可审计接口。
+    value: 能从一个 V2.6 训练数字追问样本分母、policy version、verifier、有效 token 和独立评测，并把结论迁移到离线轨迹沙盒项目。
+    strategy: 先读 V2.6 发布页与报告，再读 MiMo-7B/VL/V2 论文和官方仓库；最后做 3-task × 2-harness 的 matched ablation。
+    prerequisites: PPO/GRPO、RLVR、MoE、Agent harness、verifier、异步训练和基础分布式训练
+  offline-trajectories-sandbox-distillation.md:
+    level: 阶段 15 新增研究 · 离线轨迹与沙盒重建
+    effort: 先读 45–60 分钟；优先方案比较、两篇直接相关论文与自己的日志审计
+    background: 用户离线轨迹暴露了部分环境状态，但原仓库、数据库与外部依赖可能缺失。
+    problem: 有哪些现成策略、论文与代码能从用户轨迹重建沙盒？覆盖不了时应补哪些知识与模块？
+    legacy: 原环境恢复、任务充分的近似重建与新环境合成需要不同证据；充分性判断不等于构建成功。
+    team: Terminal-Universe、SWE-Together、EnvScaler、AWM、ASTRA 及 SWE-smith、Harbor 等原论文与官方项目团队。
+    impact: 将轨迹重建方法、公开任务实现、有状态环境合成与独立验证放进同一张选型地图。
+    value: 能根据日志证据选择现有路线，识别复用缺口，并设计恢复真实性与成本实验。
+    strategy: 先读 Terminal-Universe 与 SWE-Together，再按代码或业务工具分支阅读源码；蒸馏作为下游选读。
+    prerequisites: Python、Git、基础容器、日志处理与状态机；蒸馏知识不作为环境重建前置
+  recursive-self-improvement.md:
+    level: 深化研究 · RSI 技术演变与效果证据
+    effort: 先读路线与产出表20分钟；方法与固定源码另读90–120分钟
+    background: 自生成数据、Agent代码与改进策略分别形成不同闭环，实际收益需要看产物和成本。
+    problem: 从STaR、STOP到DGM和Hyperagents，每一步解决了什么瓶颈，实际改出了什么？
+    legacy: 最佳分数上涨可能来自更多搜索；元层迁移、持续累积与递归加速需要分别验证。
+    team: Gödel Machine、STaR、STOP、ADAS、DGM、AZR、AlphaEvolve、Hyperagents及近期探索策略团队。
+    impact: 14篇原文串联技术演变，按任务、预算与对照核对产出，并定位4个官方仓库的递归入口。
+    value: 能解释代码和权重如何跨轮变化，读懂结果与不显著差异，设计同起点同成本元能力实验。
+    strategy: 先读第0节路线和效果账本，再读STOP→DGM→Hyperagents；第11节沿固定代码追踪并落到离线环境恢复实验。
+    prerequisites: 工具Agent、Python、基本评测；权重更新路线需了解SFT和RL
+  needle3-causal-convolution.md:
+    level: 新增研究 · 端侧模型与源码精读
+    effort: 建议投入：60–90 分钟；相关论文按问题回查
+    background: 小设备需要把自然语言转成工具参数，又受权重、缓存和延迟限制。
+    problem: 因果卷积如何进入 QKV 与条件记忆，怎样与注意力、通道混合和深度裁剪协作？
+    legacy: 整模榜单不是卷积消融；因果时间遮罩不是因果推断；压缩文件大小不是峰值内存。
+    team: Cactus Compute 官方模型与固定源码；SAN、WaveNet、GQA、Engram、Monarch、mHC、Mamba 原始论文。
+    impact: 将局部混合、长程选择、查表记忆和结构化通道计算拆成可检查的模块。
+    value: 能手算抽头、文档边界、流式状态与参数账，并设计局部绑定任务的消融。
+    strategy: 先读两类卷积和数值例子，再追固定源码，最后核对比较合同与实验设计。
+    prerequisites: QKV、张量维度、自回归生成；本文补充 depthwise、dilation 与流式缓存
+  dart-sd-vake-structured-post-training.md:
+    level: 新增研究 · 同团队论文专题
+    effort: 建议投入：60–90 分钟；原文公式与实验另读 2 小时
+    background: 多轮工具轨迹和事实问答都可能掩盖模型真正的能力缺口。
+    problem: 分清局部恢复监督与参数知识激活，解释数据、中间状态、反馈和参数更新路径。
+    legacy: 图投影不等于真实不可恢复；新增三元组帮助答题不等于完整证明知识来源。
+    team: ByteDance 重合作者团队；中国科学技术大学与华中科技大学合作作者。
+    impact: 通过可检查的状态或知识增量，将笼统的能力提升拆成可比较的训练干预。
+    value: 将工具调用失败和知识访问失败变成有控制变量的训练实验。
+    strategy: 先读方法卡，再手算 mask 与组优势，最后核对原文主结果和消融。
+    prerequisites: causal LM loss、工具 Agent、GRPO；可回查已有蒸馏和信用分配专题
+  jev-system-one-rlcd.md:
+    level: 新增研究 · 模型与训练方法
+    effort: 建议投入：60–90 分钟；核心论文另读 2–3 小时
+    background: JEV 将文本状态映射为类型化决策，RLCD 以概率校准为目标，但训练细节尚未完整披露。
+    problem: 分清类型约束、决策准确率、概率校准和工作流效率，找到可以独立验证的训练研究问题。
+    legacy: 官方主张、相关原始论文和本页实验建议分别标注；相关论文不等于 JEV 已采用的方法。
+    team: TypeSafe 官方资料；Guo、Gneiting、Raftery、Rewarding Doubt 等相关研究作者。
+    impact: 用严格适当评分规则连接置信度学习、强化学习与自动化决策。
+    value: 能选择监督、温度缩放、蒸馏和校准奖励对照，并以 risk–coverage 验证实际收益。
+    strategy: 先读接口和证据边界，手算概率奖励，再读 Rewarding Doubt 与训练对照方案。
+    prerequisites: 交叉熵、条件概率；PPO 可回查现有专题
+  kimi-series-technical-lineage.md:
+    level: "阶段 14 综合验收 · 系统调研"
+    effort: "建议投入：120–180 分钟，按架构与训练信号分两遍阅读"
+    background: "Kimi 从长推理 RL、Muon 优化与工具环境，演进到视觉并行 Agent，再在 K3 汇合 KDA、AttnRes 与高稀疏 MoE。"
+    problem: "核实 K3 及中间版本，解释每项技术改了哪个对象、梯度和系统状态。"
+    legacy: "论文消融、整模结果和产品声明证据强度不同；开放权重不等于完整训练配方。"
+    team: "Moonshot AI / Kimi Team；相关 Mooncake、优化器与架构合作团队。"
+    impact: "把优化器、时间记忆、深度残差、专家路由、Agent 信用分配和服务缓存串成一条可查证路线。"
+    value: "能区分三类专家、三种 clipping、关键路径与总算力，以及 KDA 状态和 MLA KV 的一致性要求。"
+    strategy: "先读版本表和路线图，再手算 KDA/PARL/OPD，最后核对原文实验合同与证据边界。"
+    prerequisites: "Transformer、MoE、策略梯度、KV cache；可回查阶段 13 长上下文与前面的 DeepSeek/GLM 专题"
+  glm-series-technical-lineage.md:
+    level: "阶段 14 综合验收 · 系统调研"
+    effort: "建议投入：120–180 分钟，按训练信号和推理状态分两遍阅读"
+    background: "GLM 从统一理解与生成的填空目标，演进到双语规模化、对话对齐、工具交互、异步 RL 与长程多模态 Agent。"
+    problem: "解释每代模型解决了哪个瓶颈，并核对 GLM-5.3 与 GLM-5.3-Flash 的实际技术差异。"
+    legacy: "开放权重不等于公开完整训练配方；发布文档、论文实验和静态配置必须分开，榜单与预算不能混用。"
+    team: "清华与智谱/Z.ai 的 GLM 系列及相关论文团队。"
+    impact: "将预训练目标、数值稳定、专家统一、稀疏注意力、异步采样和环境扩展串成可审计的研究路线。"
+    value: "能分清 MLA、DSA、索引共享、文本摘要的对象，并检查训练目标的 ratio、mask、归约与梯度边界。"
+    strategy: "先读版本核验和路线图，再精读 4.5/5 的实验与目标函数，最后查看 5.3/Flash 固定配置和评测脚注。"
+    prerequisites: "Transformer、MoE、PPO/GRPO、KV cache；可回查已有 DeepSeek 与长上下文专题"
   formula-reading-bridge.md:
     level: "阅读前置 · 必读工具"
-    effort: "建议投入：45–75 分钟，并亲手重算一次"
+    effort: "先读 10 分钟算例；其余作为公式查询工具"
     background: "真实 FAQ 显示，主要障碍不是抽象概念本身，而是论文把样本、张量、概率、归约和参数更新压进一行公式；同一困难会在 Transformer、BERT、DPO 和 GRPO 中反复出现。"
     problem: "建立一套可复用的论文公式阅读顺序：中文动作、最小样本、shape、完整前向、loss、梯度接收者、数值更新、一般公式和证据边界。"
     legacy: "最小算例只能解释计算方向，不能代替论文实验、真实大模型 shape、分布式归约、混合精度或具体框架实现。"
     team: "这是本任务根据 Reader FAQ 归纳的教学桥，不对应单一论文团队；例子回查 Bengio 2003、Transformer、Adam/AdamW 与 reasoning-RL 原始来源。"
-    impact: "它不新增研究结论，但显著降低后续所有精读的符号理解成本，并把常见误解统一成可检查的九行模板。"
+    impact: "提供概率、交叉熵、期望与 KL 的可复算例子；不提出新的研究结论。"
     value: "先读这一页，后面遇到求和、连乘、softmax、交叉熵、mask、mean、KL 或策略目标时，你能先恢复谁对谁做什么，再判断论文真正改了哪里。"
-    strategy: "完整手算三词表 CE 与一步更新；然后用末尾九行模板任选一篇后续论文复述。公式来源和教学数字要始终分开。"
+    strategy: "先看第 3–5 节算一次 CE 和更新；读 DPO/GRPO 时再回查第 9 节的期望与 KL。"
     prerequisites: "基础四则运算、向量和导数的直觉；不要求先会 Transformer"
 
   neural-lm-word2vec.md:
     level: "基础补课 · 选读"
-    effort: "建议投入：45–75 分钟，抓目标函数演化"
+    effort: "先读 10–15 分钟，抓预测任务与损失的区别"
     background: "早期模型既想算出‘下一个词的完整概率’，又想从海量文本中高效学习词的表示；当词表很大时，为每个词都计算一次概率非常昂贵。"
     problem: "解释词为什么能被表示成可计算的向量，并分清三件事：完整的语言概率模型、只抽少量反例训练的负采样，以及为了学好向量而采用的替代训练目标。"
     legacy: "静态词向量无法处理上下文多义性；负采样得到的好表示不等于可比较的句子概率，也没有解决长距离组合建模。"
     team: "主线跨越 Bengio 等人的蒙特利尔神经语言模型工作，以及 Mikolov 等人在 Google 推动的 word2vec 系列。"
-    impact: "它奠定了‘把离散词转换成可训练向量’的基本思路。word2vec 成为大规模词义表示的经典入口，但一个词只有一个固定向量的假设，后来被上下文相关表示取代。"
+    impact: "联合学习词向量与预测模型、低成本学习共现表示，是两项历史贡献；现代模型仍查词元表，再用后续网络生成上下文表示。"
     value: "帮你避免把词向量、语言模型输出的概率和负采样训练目标混为一谈；以后阅读词元嵌入、对比学习或采样损失会更稳。"
     strategy: "精读目标函数和‘哪些参数收到梯度’；历史实验与词相似度榜单可浏览。读完应能用中文说明：完整词表归一化与负采样到底差在哪里。"
     prerequisites: "点积、梯度、交叉熵，以及 softmax（把一组分数转换为总和等于 1 的概率）"
 
   contextual-representations-finetuning.md:
     level: "阶段 1 转折 · 精读"
-    effort: "建议投入：100–150 分钟，并选读三篇正式原文"
+    effort: "先读 15–20 分钟；做领域训练时深入第 6.3 节"
     background: "静态词向量把一种词映射到一个固定向量；早期下游模型虽能再计算上下文状态，却常需从有限任务标签重新学习。直接全参微调预训练语言模型又容易在小数据上过拟合或遗忘。"
     problem: "用 ELMo、ULMFiT 与 DAPT/TAPT 分清上下文化、主干梯度、领域适配与任务适配；逐阶段说明数据、label、checkpoint 和 loss。"
     legacy: "ELMo 的监督阶段仍冻结双向 LSTM，ULMFiT 只覆盖 LSTM 分类；DAPT/TAPT 只覆盖 RoBERTa-base 英语分类，且错域与同域跨任务继续预训练均出现负迁移。"
     team: "Peters 等人的 AllenAI/UW 团队发表于 NAACL 2018；Howard/Ruder 发表于 ACL 2018；Gururangan 等人的 AllenAI/UW 团队发表于 ACL 2020。"
     impact: "三篇工作把静态 embedding、上下文 feature、受控全模型迁移与 Transformer continued pretraining 接成一条可验证路线，并固定 DAPT/TAPT 这组工程语言。"
     value: "读完能把 contextualization、bidirectionality、domain/task adaptation、frozen features、full fine-tuning 和 PEFT 分开，也不会把‘同领域’当作 checkpoint 可迁移证明。"
-    strategy: "先用两个 bank 走完表示/梯度路径，再画 general->DAPT->TAPT->supervised 四阶段图；亲读 ELMo pp.1–4/6–9、ULMFiT pp.1–5/7–9、DAPT/TAPT pp.2–9/16，重点找三类负结果。"
+    strategy: "先用两个 bank 分清输入表示和上下文状态；再看领域/任务文本如何进入训练。原文优先读 ELMo pp.3–4、ULMFiT p.8 和 DAPT/TAPT p.6 的关键机制与反例。"
     prerequisites: "完成前一页的三词 Seq2Seq/LSTM 状态路径即可；不要求脱离样本背 RNN/LSTM 公式，本页只复用‘同一 token occurrence 会得到上下文状态’和‘梯度是否进入预训练主干’"
 
   pretransformer-gpt-lineage.md:
@@ -181,15 +280,15 @@ papers:
 
   embedding-models-lineage-selection.md:
     level: "主线合并专题 · 原理与近期研究"
-    effort: "分三次阅读：基础 90 分钟；发展 90 分钟；评测 45 分钟"
+    effort: "先读主线；推导、实验明细与实现细节按需展开"
     background: "原句向量、通用训练、LLM 编码器、模型谱系与代码检索分散在五篇文章；本篇按同一计算图连续编排。"
-    problem: "解释表示、相似度、训练数据、损失与索引的关系，串联 SBERT/SimCSE、E5/BGE、Qwen3，并核验截至 2026-09-14 的近期方向。"
+    problem: "从编码与对比学习建立检索闭环，再根据失败案例选择模型和实验。"
     legacy: "相似不等于相关；长窗口不保证局部证据召回；近期预印本的同协议结果不等于业务最优；本次未运行模型基准。"
     team: "综合 SBERT/SimCSE、Microsoft E5、BGE、Qwen、Jina、Google EmbeddingGemma 及近期检索研究团队的原文；不是单一团队报告。"
     impact: "将五篇旧文核心方法合并，并新增 12 篇固定原文，涵盖蒸馏压缩、长文本、多模态、多向量理论、推理和记忆评测。"
-    value: "在一页完成从编码原理到实际选型的系统阅读，并能为 knowledge_factory 制定可复核的检索实验。"
-    strategy: "先手算第 1 章的分数与 loss，读 2–4 章历史；再读 5–9 章近期方向，用 10–11 章设计同预算对照。原文入口见第 12 章。"
-    prerequisites: "BERT/Transformer hidden state、点积与 softmax 的直觉；DPR 和 ColBERT 完整实验作为延伸阅读"
+    value: "能分开编码器、chunk、召回和重排的贡献，识别错误负例与榜单外推。"
+    strategy: "先读相似度、一次对比更新和四次方法变化，再设计固定预算的评测；代码、长文和多模态按需补读。"
+    prerequisites: "向量点积、Transformer与softmax；不要求先掌握Embedding模型谱系。"
 
   general-text-embedding-training.md:
     level: "Embedding 训练 · 推荐精读"
@@ -433,14 +532,14 @@ papers:
 
   process-supervision-test-time-search.md:
     level: "推理验证核心 · 深度精读"
-    effort: "首读 60–90 分钟；安全谱系第二遍"
+    effort: "先读过程监督与测试时计算主线；工件按需回查"
     background: "CoT 和 self-consistency 能产生多条推理路径，但多数票只聚合最终答案；结果监督也无法指出中间哪一步出错，更多候选还会增加评分器被利用的机会。"
     problem: "比较 ORM 的整题结果监督与 PRM 的逐步过程监督，并说明固定 generator 下的 best-of-N、verifier-guided search 与后续 verifier-reward RL 为什么是不同算法阶段。"
     legacy: "自然语言步骤不保证忠实反映内部推理；PRM 仍受标签来源、步骤边界、分数归约、generator shift 与搜索放大 false positive 影响。"
     team: "Lightman、Kosaraju、Cobbe 等人的 OpenAI 团队工作 Let's Verify Step by Step，并结合后续 test-time compute 研究进行边界审计。"
     impact: "该工作发布 PRM800K 并推动过程奖励模型成为数学推理验证和测试时搜索的重要基线；其监督与搜索范式也影响后续 reasoning model 训练。"
     value: "帮你把 verifier training、推理时选择和 policy-gradient RL 分开，避免将 best-of-N 的收益误归因于权重更新，也能审计测试时计算是否只是在放大代理漏洞。"
-    strategy: "用 `17+26` 的正确过程与碰巧答对过程，走完 generator 采样、ORM/PRM 标签、verifier loss 和冻结 verifier 的 best-of-N；重算 product/min/last 排序。实验、安全监督谱系与工件第二遍再读。"
+    strategy: "先走完候选生成、步骤标签、评分器训练与推理选择，重算product/min/last排序；可扩展监督转独立专题。"
     prerequisites: "CoT、自一致性、交叉熵、reward model、采样与 best-of-N"
 
   scalable-oversight-control-evaluation.md:
@@ -493,15 +592,15 @@ papers:
 
   instruct-model-effective-post-training.md:
     level: "后训练证据综合 · 核心专题"
-    effort: "首读 90–120 分钟；按目标选读原文与工件 4–7 小时"
+    effort: "先读主线；推导、实验明细与实现细节按需展开"
     background: "Qwen3 30B-A3B Instruct/Coder 已出现继续 SFT、SFT+RL 和明确 full-parameter FT 的证据；但任务接近度、参数披露、系统贡献与公开工件分散在不同论文，不能再由 dense SWE-Gym 单独代替。"
-    problem: "区分‘MoE Instruct 继续训练有效’与‘明确全参数有效’，再按 exact task、matched harness、trainable scope、公开数据/代码/checkpoint 和 expert/router 健康决定证据能支撑哪一步。"
+    problem: "先诊断知识、动作规则和执行稳定性缺口，再判断继续SFT、模拟反馈GRPO或蒸馏的价值。"
     legacy: "目前没有工作同时满足 exact Qwen3-Coder MoE、repo issue resolution、明确 full-parameter 和完整训练包；SWE-MeM 最贴任务，MoE specialization 最贴架构，Scale-SWE/Open-SWE-Traces 最有公开材料。"
     team: "综合 SWE-MeM、Scale-SWE、Open-SWE-Traces、FuseSearch、MoE specialization、WebWeaver，并用 SWE-Gym、ToolRL、Knowledge-Instruct、DiSC 和 retention/replay 研究控制外推边界。"
     impact: "把 dense-to-MoE 类比改成三条互补证据链，并新增 optimizer scope、expert token/gradient coverage、router entropy/drift、route replay 与 MoE 系统成本审计。"
-    value: "直接服务 Qwen3-Coder MoE 全量训练决策：知道哪些公开数据/权重可先用、哪些论文只证明可行，以及为什么最终仍需 full-parameter vs expert-aware PEFT 的 matched experiment。"
-    strategy: "第一遍只读摘要、§3、§4.2–4.3 和 §8，先完成论文价值/复现矩阵；第二遍分别亲读 SWE-MeM、MoE specialization、Scale-SWE/Open-SWE-Traces 与 WebWeaver/FuseSearch 的固定页和工件边界。"
-    prerequisites: "已读 instruction/CoT、Reward/Verifier、DPO 与 reasoning-RL 基本对象；公式均在本页用最小数据流重新说明"
+    value: "能区分模拟器带来的新训练状态与GRPO本身的增量，并检验真实反馈下的迁移。"
+    strategy: "先读你的模拟反馈场景和对照实验，再按需读知识注入、参数范围与论文证据；不从论文名单开始。"
+    prerequisites: "Instruct模型、轨迹SFT和基本奖励；组内优势用四条轨迹说明。"
 
   dpr-dense-retrieval.md:
     level: "检索地基 · 推荐精读"
@@ -589,26 +688,26 @@ papers:
 
   knowledge-distillation-autoregressive.md:
     level: "专项方法 · 算法工程深读"
-    effort: "首读 90–140 分钟；OPSD 反例与实现合同第二遍"
+    effort: "先读主线；推导、实验明细与实现细节按需展开"
     background: "大模型或长推理策略部署昂贵；除了压缩外部 teacher，现代 reasoning post-training 还尝试把参考解、验证结果和工具反馈转成学生真实轨迹上的 dense token signal。"
-    problem: "统一区分 soft/logit KD、SeqKD、GKD/OPD、OPSD、SDPO 与 U-OPSD，明确 rollout 人口、privileged context、teacher 刷新、KL 方向、stop-gradient、显存和长程 credit。"
+    problem: "回答谁生成前缀、教师多看到什么、学生收到文本还是词表分布。"
     legacy: "On-policy 只缓解状态分布偏移，不能保证 privileged teacher 在错误长轨迹上给出正确 recovery；完整词表信号昂贵，hindsight/style bias 还可能只压缩 thinking。"
     team: "从 Hinton KD、Sequence-Level KD、MiniLLM/GKD 延伸到 OPSD、SDPO、β-OPSD、U-OPSD 及其 thinking-enabled 反证。"
     impact: "OPSD 系列把蒸馏从模型压缩推进到 reasoning/agent post-training，连接 dense imitation、RLVR credit assignment、环境反馈和无标签 self-consistency。"
-    value: "读完能手写同前缀双条件分布、算 full-V logits 显存、审计 fixed/EMA teacher，并解释为什么 dense loss 可能变短却不变对。"
-    strategy: "先用四词表重算 `q-p`，再在交互实验台切换 SeqKD/GKD/OPSD/SDPO/U-OPSD/β-OPSD；精读 OPSD 正结果与 incorrect-only 反例，最后手算 `2BTVs` 和 reference-to-teacher 插值。"
-    prerequisites: "softmax、交叉熵、KL、teacher forcing 与 causal rollout；policy gradient、LoRA 和分布式 ownership 有帮助但正文会给出必要公式"
+    value: "能区分Word-KD、SeqKD、GKD和OPSD的计算图，解释PPL与生成质量为何可能分离。"
+    strategy: "依次看token更新、序列概率、学生前缀和特权上下文；KL推导、方法变体与工程细节按需展开。"
+    prerequisites: "自回归生成、softmax和交叉熵；正文用小词表补齐概率与梯度。"
 
   arxiv-2403.05530.md:
     level: "长上下文案例 · 研究选读"
     effort: "首读 10–15 分钟；第二遍 60–100 分钟"
     background: "长 context window 从几十万扩展到百万级后，API 容量声明需要以跨模态检索、长文理解和实际任务协议验证。"
-    problem: "展示 Gemini 1.5 的 MoE 与长上下文能力，并用 needle、长视频/音频和多类任务论证模型可利用超长输入。"
+    problem: "理解NLL、单针、多针和长对话回查分别测什么，提炼Gemini 1.5长上下文报告的核心贡献。"
     legacy: "单 needle、特定 prompt 与累计指标不能代表复杂多证据推理；模型、API、数据和 serving 细节也不完全开放。"
     team: "Google DeepMind 的 Gemini 大型协作团队技术报告。"
     impact: "推动百万 token context 成为前沿模型能力指标，也促使社区更严格地区分 window size 与 effective context。"
-    value: "适合练习如何审计高影响技术报告：拆分 checkpoint、prompt、retrieval cardinality、scorer、aggregation 和成本。"
-    strategy: "把同一 16 段提示分别交给单目标、多目标、冲突证据和服务成功四种 evaluator，手算 `96/98`、`96/100` 与累计平均；Pro/Flash 版本、完整图表和闭源工件边界第二遍再读。"
+    value: "从任务和评分方法读懂长上下文曲线，把评测结果转成知识库的验收方案。"
+    strategy: "先读四类任务和关键结果，再看NLL/MRCR纵轴；分母算例、型号版本与工件集中回查。"
     prerequisites: "MoE、长上下文评测、needle test、基本多模态概念"
 
   arxiv-2412.19437.md:
@@ -625,27 +724,27 @@ papers:
 
   qwen2-qwen25-qwen3-lineage.md:
     level: "现代模型谱系 · 推荐精读"
-    effort: "首读 10–15 分钟；第二遍 90–150 分钟"
-    background: "Qwen2、Qwen2.5 与 Qwen3 都有可固定的技术报告，但架构、数据、长上下文、偏好训练和蒸馏证据散落在多个专题中；按模型名进入时，很难看出哪些是沿用、哪些是替换。"
-    problem: "用同一条问题—生成—评价—反馈—损失—梯度—刷新流程比较三代，解释现代模型系列的真实演进为什么不能压缩成参数量、上下文长度或 DPO/GRPO 标签。"
-    legacy: "三份报告都缺少把架构、数据和各后训练阶段一次只改一个变量的完整消融；数据、trainer、evaluator 与论文 checkpoint 的可复现工件也未完整公开。"
-    team: "Qwen Team / Alibaba 的三份相邻 arXiv 技术报告综合；本页是系列学习入口，不声称它们已正式发表于会议或期刊。"
-    impact: "Qwen 是重要的开放模型系列；三代报告覆盖现代 decoder、稀疏专家、长上下文、数据飞轮、偏好优化、thinking protocol 与强到弱蒸馏，适合作为系列报告审计范例。"
-    value: "读完后应能判断一个代际变化究竟改了 block、样本人口、评价者、反馈类型、loss、梯度接收者还是部署协议，并避免把整模提升归因给一个缩写。"
-    strategy: "沿用数据库恢复 A/B/C，先走 `ids [B,T]→logits [B,T,V]`，再分清 Qwen2 当前回答组成 pair、Qwen2.5 fixed-pair DPO 与 8-response scalar/group GRPO、Qwen3 多评价器与学生蒸馏。四分数 DPO 手算后即可停；架构、长度 ABI、数据和实验第二遍再读。"
-    prerequisites: "Transformer 的 Q/K/V 与 KV cache、causal LM、SFT、DPO、奖励模型，以及 MoE 总参数/激活参数的基本区别"
+    effort: "先读主线；推导、实验明细与实现细节按需展开"
+    background: "截至 2026-09-18，Qwen 已从三代语言模型演进到 3.8；Next、Coder、VL、Omni 和线上 Max 的架构、训练与产品合同需要分开读取。"
+    problem: "用一张代际地图串起Qwen的架构、数据、反馈和专项分支，避免把整模提升归给单一改动。"
+    legacy: "最新报告有组件消融，但不是所有产品的训练账本；百万窗口不保证检索可靠，kernel speedup 不等于服务加速，完整数据与训练栈仍未核验。"
+    team: "Qwen Team / Alibaba 官方技术报告与固定模型卡；新增 Qwen3.8 架构、Qwen3-VL 和 Qwen3.5-Omni PDF，区分作者结论与本页推导。"
+    impact: "把 Qwen2/2.5/3 的偏好与推理训练接到 3.8 的状态压缩、稀疏检索、容量和稳定性，并覆盖 Agent 与多模态接口。"
+    value: "能解释不同反馈怎样进入更新，并区分架构报告、模型卡和专项模型的证据范围。"
+    strategy: "先定位型号，再选择架构、数据或后训练主线；公式推导、型号和来源版本按需展开。"
+    prerequisites: "Transformer、GQA、MoE和基本后训练；递归状态与稀疏读取在正文解释。"
 
   deepseek-v2-v3-r1-lineage.md:
     level: "现代模型谱系 · 推荐精读"
-    effort: "结论首读约 5–10 分钟；架构主线 30–45 分钟；机制与原文分次精读"
+    effort: "先读主线；推导、实验明细与实现细节按需展开"
     background: "从早期 dense 模型到百万上下文 Agent，瓶颈依次落在参数计算、KV 宽度、历史访问、跨层重复和长程训练系统；只按发布日期读报告难以对照这些变化。"
-    problem: "在一篇中对比 DeepSeek 主系列与专门分支，并就近讲解 DeepSeekMoE、GRPO、NSA、YOCO、跨层 KV/索引共享、mHC、Engram 和 DSpark。"
+    problem: "沿架构成本与训练信号两条线，解释每代究竟改了什么。"
     legacy: "代际整模提升不是单组件消融；CSA2 仍有随长度增长的全局缓存与首次索引，bounded replay 是近似恢复，异步 OPD 也不等于所有样本严格来自最新策略。"
     team: "DeepSeek-AI 官方报告与模型卡；相关机制同时追溯 Microsoft、清华、MIT/IBM 等原始工作。按固定 PDF 物理页回查，不混用版本。"
     impact: "把稀疏计算、缓存压缩、可验证推理和长程 Agent 系统放在同一演进链中。"
-    value: "能区分 MLA、稀疏注意力和线性递归，重算 V4.1 的 890 bytes/token，并说明固定响应 SFT 与学生轨迹上全词表 OPD 的不同。"
-    strategy: "先读七条结论、五个前置概念和代际表，再沿同一修复请求追踪存什么、读什么、谁接梯度；运行 MLA、Top-k、890 bytes/token 与 OPD 四段小代码，最后点击 PDF 页码核对公式、配置和实验边界。"
-    prerequisites: "Transformer、softmax、矩阵乘法、KV cache、交叉熵；MoE、RL 与蒸馏在文内衔接，不要求先读 V3 单篇"
+    value: "能区分容量、每位置缓存宽度、访问数量与跨层副本，以及教师回答和教师架构。"
+    strategy: "按连续代际地图阅读MoE、MLA、R1、DSA和跨层共享；详细算账、训练配置与旁支按需展开。"
+    prerequisites: "Transformer、KV cache、SFT和奖励；基础概念可在第一节展开回查。"
 
   agentic-rl-credit-assignment.md:
     level: "Agentic RL 主线 · 机制精读"
@@ -709,15 +808,15 @@ papers:
 
   multimodal-llm-vision-language-abi.md:
     level: "多模态接口 · 必读"
-    effort: "首读 20–30 分钟；完整方法与实验 90–140 分钟"
+    effort: "先读主线；推导、实验明细与实现细节按需展开"
     background: "视觉输入必须先变成数量、位置和时间语义明确的 hidden states，才能进入文本 decoder；视觉 token、文本 token 和答案 parser 不是同一种对象。"
-    problem: "比较 Flamingo 的 Resampler/gated cross-attention、LLaVA 的线性 projector 与 Qwen2.5-VL 的动态分辨率/时间位置，恢复 pixels 到答案的完整 ABI。"
+    problem: "解释像素如何成为连续视觉token，以及视觉特征怎样接到语言模型。"
     legacy: "三篇论文同时改变视觉 encoder、数据、分辨率、语言模型和后训练，整模榜单不能单独归因给 projector、window attention 或时间位置。"
     team: "综合 DeepMind Flamingo、LLaVA 团队与 Qwen Team 的原始报告；本页只使用固定版本 PDF，不声称公开工件完整复现训练。"
     impact: "把视觉 token、空间 grounding 和视频时间戳纳入 LLM 系统账本，是理解 VLM 不是‘给 prompt 加一张图’的关键入口。"
-    value: "适合排查 OCR、坐标、时间定位和 hallucination 分别发生在视觉编码、bridge、decoder 还是 evaluator。"
-    strategy: "固定 `420x840` 控制台截图和 12 秒录屏，走 `pixels -> states -> bridge -> logits -> parser`；第一遍只核对 shape、梯度接收者和时间戳，完整模型细节第二遍回查。"
-    prerequisites: "Transformer hidden/logits、causal CE、基本图像张量；不要求先会 ViT"
+    value: "能区分图像token与文字ID，算清序列长度和特征宽度，并解释对齐维度为何不等于理解图像。"
+    strategy: "先走通224×224图像的patch、投影、视觉编码与拼接，再比较三种连接路线；模型配置与实验按需回查。"
+    prerequisites: "向量、矩阵乘法与Transformer基本结构；不要求先会ViT。"
 
   tool-use-function-calling-abi.md:
     level: "工具接口 · 必读"
@@ -893,14 +992,14 @@ papers:
     prerequisites: PPO、重要性采样、分布式训练
   20260911-translation.md:
     level: 项目深读
-    effort: 建议投入：6–8 小时，分两轮
+    effort: "按项目问题分段阅读；参数推导与方法细节按需回查"
     background: 翻译项目的词表、压缩、监督与偏好目标必须在同一数据和评价合同下解释。
     problem: 剪枝后可生成不代表长尾无损；改 tokenizer 会改变参数接口；长文与偏好训练都可能利用长度和评价漏洞。
     legacy: 最终 NLLB 仅 MMT；512 训练长度与可扩展位置表不同；CPO 的 FLORES 训练身份不能被当作独立测试。
     team: NLLB/CPO、SparseGPT/Wanda/M-Wanda、LLM-Pruner、FOCUS、词表初始化、DBA 与文档评价原文。
-    impact: 从词表与表示到偏好和长链翻译，用十二个问题形成可验证的工程决策。
+    impact: "把模型结构、词表接口、训练和运行时需求放到同一翻译项目决策路线中。"
     value: 用参数账、概率和梯度手算、同起点实验支撑翻译项目追问。
-    strategy: 先读训练和长度校正，再沿剪枝、tokenizer、PO 与长链逐项做消融设计。
+    strategy: "先看600M架构与参数账，再按压缩、词表、训练或动态术语选分支；最后用统一实验路线决定下一步。"
     prerequisites: Seq2Seq、softmax/交叉熵、DPO、翻译项目背景
   20260911-retrieval-sql.md:
     level: 项目选读
@@ -914,13 +1013,24 @@ papers:
     strategy: 追踪一个答案到原文；比较语法通过和执行语义正确。
     prerequisites: 向量检索、RAG、SQL
   20260911-f5tts.md:
-    level: 语音专项
-    effort: 建议投入：3–5 小时
-    background: 调用 TTS 或更换 solver 不能解释流匹配、对齐和时延预算。
-    problem: 不依赖逐音素强制对齐的非自回归 TTS 可以简化流程，但文本与声学输入的有效长度差会导致对齐不稳，迭代生成又带来时延。
-    legacy: 不使用音素级 duration predictor 不等于不需要总时长；Sway、ODE solver、CFG、分块发送分别改变不同环节，RTF 也不等于首包延迟。
-    team: Flow Matching、E2 TTS 与 F5-TTS 原文；SWivid/F5-TTS 固定源码。
-    impact: 最后沿文本、mel、向量场和波形，解释质量与首包时延的来源。
-    value: 把已有工程经验转化为可推导、可比较、可追问的技术判断。
-    strategy: 手算一帧速度和 Sway 网格；固定 checkpoint 做 solver/时长/前端消融。
-    prerequisites: 张量、MSE、常微分方程直觉；章节内补齐
+    level: 语音基础与 F5-TTS
+    effort: 分三遍阅读：基础 → 训练与模块 → 进阶实验
+    background: 已基于开源框架做过音色微调、流式间隙的 LLM 多音字纠正和文本正则处理；现在从熟悉的 NLP 补齐语音原理。
+    problem: 怎样把波形与 mel、文本对齐、CFM loss 和音色适配接成完整的训练与生成链路。
+    legacy: 文本与语音的长度不同，同一句话有多种声音实现；前端改对读音后，声学模型仍需完成对齐、韵律和音色生成。
+    team: F5-TTS、Flow Matching 与组件原论文；SWivid/F5-TTS 固定源码；项目上下文依据本人补充。
+    impact: 从 Tacotron、FastSpeech、codec LM 到 flow matching，理解各条路线解决的瓶颈。
+    value: 解释音色微调为何生效、LLM 纠正如何进入模型，以及流式调度改变哪部分等待。
+    strategy: 先读 §§0–3.0、3.4–3.5 和 §10.1；手算一次 loss，再追 ConvNeXt/DiT；solver 与系列论文放到后两遍。
+    prerequisites: 沿用 NLP 的 embedding、attention 和反向传播；本文补波形、mel、音色、韵律、对齐与 ODE 直觉。
+  cross-model-latent-communication.md:
+    level: 前沿研究与系统对照
+    effort: 建议投入：2–3 小时，先读接口与成本，再读梯度和负结果
+    background: 文本协作需要生成和重新读取中间说明，异构模型的隐藏状态与缓存又不能直接互换。
+    problem: 如何用 bridge、共享空间或兼容 decoder 复用源模型计算，并确认质量收益与端到端成本。
+    legacy: 省掉中间文本不等于比小模型更快；冻结骨干不等于训练便宜，拼接成功不等于语义无损。
+    team: EoT、CoT-X、model stitching、C2C、XBridge、KV alignment、OverFill 等原论文与官方代码；Mostik 仅按公司披露记录。
+    impact: 连接推理协作、表示对齐与模型服务，分清文本传递、内部状态交接和训练蒸馏。
+    value: 能拆解跨模型加速主张，识别不公平基线、桥容量、缓存通信与失败模型对。
+    strategy: 先画信息流，再手算冻结梯度与延迟，最后设计同信息预算的消融。
+    prerequisites: Transformer/KV、prefill/decode、交叉熵与反向传播；蒸馏和连接器按需回查

@@ -608,7 +608,7 @@
       const layers = Number(inputs.layers?.value || 3);
       const position = Number(inputs.position?.value || 15);
       Object.entries({ window: windowSize, layers, position }).forEach(([key, value]) => setText(root, `[data-swa-output="${key}"]`, value));
-      setText(root, "[data-swa-summary]", `直接 ${windowSize} · 理论接力约 ${Math.min(position + 1, windowSize * layers)}`);
+      setText(root, "[data-swa-summary]", `直接 ${windowSize} · 理论可达 ${Math.min(position + 1, 1 + layers * (windowSize - 1))}`);
       setText(root, "[data-swa-position]", position);
       setText(root, "[data-swa-slot]", position % windowSize);
       const slots = root.querySelector("[data-swa-slots]");
@@ -633,7 +633,7 @@
       context.font = "11px system-ui, sans-serif";
       for (let depth = 0; depth <= layers; depth += 1) {
         const y = top + depth * rowGap;
-        const reach = depth === 0 ? 1 : Math.min(position + 1, depth * windowSize);
+        const reach = Math.min(position + 1, 1 + depth * (windowSize - 1));
         const start = position - reach + 1;
         context.fillStyle = "rgba(92, 103, 110, .75)";
         context.textAlign = "right";

@@ -399,25 +399,19 @@ ${"```"}
             )
 
             page.goto(f"{base_url}/", wait_until="networkidle")
-            current_topic = page.get_by_role(
-                "link", name="进入专题精读", exact=True
-            )
-            expect(current_topic).to_be_visible()
-            expect(page.locator("body")).to_contain_text(
-                "从现成 Instruct checkpoint 出发，后训练还能把能力推多远"
-            )
-            current_topic.click()
-            page.wait_for_url(f"{base_url}/papers/instruct-model-effective-post-training/")
-            expect(page.locator(".md-content__inner > h1")).to_contain_text(
-                "从现成 Instruct checkpoint 出发，后训练还能把能力推多远"
-            )
+            expect(page.locator(".stage-directory__card")).to_have_count(15)
+            route_document_count = page.locator(".stage-directory__card li a").count()
+            first_stage = page.locator(".stage-directory__card").first
+            first_stage.locator("summary").click()
+            first_stage.locator("li a").first.click()
+            page.wait_for_url(f"{base_url}/papers/formula-reading-bridge/")
 
             page.goto(f"{base_url}/reading-guide/", wait_until="networkidle")
             expect(page.locator(".learning-stage")).to_have_count(15)
             expect(page.locator(".learning-stage").first).to_contain_text("进入前")
             expect(page.locator(".learning-stage").first).to_contain_text("读完后")
             expect(page.locator(".learning-stage").first).to_contain_text("阶段检查")
-            expect(page.locator(".learning-stage__papers > li")).to_have_count(77)
+            expect(page.locator(".learning-stage__papers > li")).to_have_count(route_document_count)
 
             # The Reader is a desktop-only application. Every generated paper
             # uses the same explicit disclosure control, whose fixed box must
@@ -976,7 +970,7 @@ ${"```"}
             expect(page.locator('[data-action="select-thread"]')).to_contain_text("历史问题")
             expect(page.locator('[data-action="archive-thread"]')).to_be_enabled()
             expect(page.locator('[data-action="new-thread"]')).to_be_enabled()
-            expect(page.locator('[data-setting="knowledge-model"]')).to_have_value("gpt-5.6-terra")
+            expect(page.locator('[data-setting="knowledge-model"]')).to_have_value("gpt-6.1-sol")
             expect(page.locator('[data-setting="knowledge-effort"]')).to_have_value("medium")
             history_answer = page.locator('.knowledge-message[data-message-id="history-assistant"]')
             expect(history_answer.locator(".knowledge-math-inline mjx-container").first).to_be_visible(timeout=5_000)
@@ -1134,7 +1128,7 @@ ${"```"}
             assert figure_label_layout["originalWidth"] >= 80, figure_label_layout
             assert figure_label_layout["translatedWidth"] >= 120, figure_label_layout
             expect(viewer.locator("#retranslation-controls")).to_be_visible()
-            expect(viewer.locator("#retranslation-model")).to_have_value("gpt-5.6-terra")
+            expect(viewer.locator("#retranslation-model")).to_have_value("gpt-6.1-sol")
             expect(viewer.locator("#retranslation-effort")).to_have_value("medium")
             viewer.locator("#retranslation-effort").select_option("ultra")
             viewer.locator("#retranslation-model").select_option("gpt-6-astra")

@@ -13,11 +13,16 @@ only an explicitly configured `READER_TRANSLATION_API_KEY`. General `OPENAI_API_
 
 ## Private Runtime Data
 
-The following paths can contain private research material or user activity and must remain local:
+The following paths can contain private research material or user activity and must stay out of
+the public GitHub repository. They may be copied into an explicitly requested private backup:
 
 - `tasks/`
 - `reader/user-data/`
 - `reader/.venv/`
+
+`tools/reader_backup.py` requires a private ModelScope dataset, snapshots SQLite databases, excludes
+credentials and virtual environments, and redacts credential-shaped strings from referenced Codex
+session transcripts. Restored private state is ignored at `.reader-backup/` and `.reader-codex/`.
 
 The personalized learning profile in `docs/learning-profile.md` is intentionally public. Review any
 new profile fields before committing them.

@@ -26,14 +26,20 @@
   let readingProgressSuppress = false;
   let readingProgressVisualPosition;
   let readingMemoExpanded = false;
+  let readingNotePosition;
+  let readingNoteId;
+  let readingNoteSaving = false;
+  let readingNotesSignature = "";
 
   function apply(collapsed) {
-    document.body.classList.toggle("reader-nav-collapsed", collapsed);
+    const narrow = window.matchMedia("(max-width: 76.1875em)").matches;
+    document.body.classList.toggle("reader-nav-collapsed", !narrow && collapsed);
     if (!toggle) return;
-    toggle.textContent = collapsed ? "›" : "‹";
-    toggle.title = collapsed ? "展开左侧项目栏" : "收起左侧项目栏";
+    const expanded = narrow ? Boolean(document.getElementById("__drawer")?.checked) : !collapsed;
+    toggle.textContent = narrow ? "☰" : collapsed ? "›" : "‹";
+    toggle.title = expanded ? "收起文档导航" : "展开文档导航";
     toggle.setAttribute("aria-label", toggle.title);
-    toggle.setAttribute("aria-expanded", String(!collapsed));
+    toggle.setAttribute("aria-expanded", String(expanded));
   }
 
   function clamp(value, minimum = 0, maximum = 1) {
@@ -71,19 +77,10 @@
       ...(token ? { "X-Reader-Token": token } : {}),
       ...(options.headers || {})
     };
-    return fetch(path, {
+    return window.ReaderApi.request(path, {
       cache: "no-store",
       ...options,
       headers
-    }).then(async response => {
-      let value;
-      try {
-        value = await response.json();
-      } catch (error) {
-        throw new Error("阅读记录服务未启动");
-      }
-      if (!response.ok) throw new Error(value.error || `请求失败：${response.status}`);
-      return value;
     });
   }
 
@@ -109,11 +106,6 @@
     const heading = String(position.heading_title || "正文").replace(/\s*\u00b6\s*$/, "").trim() || "正文";
     const percentage = Math.round(clamp(position.scroll_ratio) * 100);
     return `${heading} · ${percentage}%`;
-  }
-
-  function readingHistoryLabel(position) {
-    const percentage = position ? Math.round(clamp(position.scroll_ratio) * 100) : 0;
-    return `历史完整度：${percentage}%`;
   }
 
   function updateReadingMemoLauncherLabel() {
@@ -149,6 +141,7 @@
     const panel = readingMemo.querySelector("[data-reading-role='panel']");
     const launcher = readingMemo.querySelector("[data-reading-action='toggle']");
     if (panel) panel.hidden = !readingMemoExpanded;
+    if (readingMemoExpanded) arrangeReadingNotes(true);
     readingMemo.classList.toggle("is-expanded", readingMemoExpanded);
     launcher?.setAttribute("aria-expanded", String(readingMemoExpanded));
     updateReadingMemoLauncherLabel();
@@ -161,8 +154,10 @@
 
   function placeReadingMemo(memo = readingMemo) {
     if (!memo) return;
-    const dock = document.querySelector(".reader-tool-dock");
-    (dock || document.body).appendChild(memo);
+    const dock = !document.body.classList.contains("reader-focus-mode") && window.innerWidth > 1440
+      ? document.querySelector(".reader-tool-dock") : null;
+    const parent = dock || document.body;
+    if (memo.parentElement !== parent) parent.appendChild(memo);
   }
 
   function updateReadingMemoCurrent(position = captureReadingPosition()) {
@@ -220,151 +215,127 @@
     };
   }
 
-  function readingPositionForHeading(heading, index, sectionOffset = 0) {
-    const article = readingProgressArticle;
-    if (!article) return null;
-    const articleTop = article.getBoundingClientRect().top + window.scrollY;
-    if (!heading) {
-      return {
-        block_id: null,
-        heading_id: null,
-        heading_title: "文档开头",
-        section_index: null,
-        offset_ratio: 0,
-        scroll_ratio: 0,
-        text_hint: ""
-      };
-    }
-    const start = heading.getBoundingClientRect().top + window.scrollY;
-    const nextHeading = readingProgressHeadings[index + 1];
-    const end = nextHeading
-      ? nextHeading.getBoundingClientRect().top + window.scrollY
-      : articleTop + article.scrollHeight;
-    const offset = clamp(sectionOffset);
-    const position = captureReadingPosition(start + Math.max(1, end - start) * offset, index);
-    if (!position) return null;
-    position.heading_id = heading.id || null;
-    position.heading_title = heading.textContent.replace(/\s*\u00b6\s*$/, "").trim();
-    position.section_index = index;
-    if (offset === 0) {
-      position.block_id = null;
-      position.offset_ratio = 0;
-      position.text_hint = "";
-    }
-    return position;
-  }
-
   function renderReadingMemo() {
     if (!readingMemo) return;
     const checkpoint = readingProgressState?.checkpoint;
     const resumePosition = readingProgressState?.resume_position || checkpoint;
-    const note = readingProgressState?.note;
     const status = readingMemo.querySelector("[data-reading-role='status']");
-    const history = readingMemo.querySelector("[data-reading-role='history']");
     const resumeLocation = readingMemo.querySelector("[data-reading-role='resume-position']");
-    const detail = readingMemo.querySelector("[data-reading-role='detail']");
     const resume = readingMemo.querySelector("[data-reading-action='resume']");
-    const noteButton = readingMemo.querySelector("[data-reading-action='note']");
-    const edit = readingMemo.querySelector("[data-reading-action='edit-note']");
-    const remove = readingMemo.querySelector("[data-reading-action='delete-note']");
-    const noteText = readingMemo.querySelector("[data-reading-role='note-text']");
-    if (checkpoint) {
-      const stale = readingProgressState?.stale ? " · 文档已更新" : "";
-      status.textContent = `最远读到：${formatReadingTime(checkpoint.updated_at)} · ${readingPositionLabel(checkpoint)}${stale}`;
-    } else {
-      status.textContent = "尚未记录阅读位置";
-    }
-    history.textContent = readingHistoryLabel(checkpoint);
+    status.textContent = readingProgressState?.stale
+      ? "文档已更新，跳转时会尝试匹配原段落。"
+      : resumePosition ? `续读位置已保存 · ${formatReadingTime(resumePosition.updated_at)}` : "浏览时自动保存进度，也可以在这里设置续读点。";
     resume.hidden = !resumePosition;
     resumeLocation.hidden = !resumePosition;
-    resumeLocation.textContent = resumePosition ? `恢复位置：${readingPositionLabel(resumePosition)}` : "";
-    noteButton.textContent = note ? "编辑便签" : "写便签";
-    edit.hidden = !note;
-    remove.hidden = !note;
-    if (note) {
-      detail.hidden = false;
-      noteText.textContent = note.text;
-    } else {
-      detail.hidden = true;
-      noteText.textContent = "";
-    }
+    resumeLocation.textContent = resumePosition ? readingPositionLabel(resumePosition) : "";
+    renderReadingNotes();
     readingMemo.classList.toggle("is-stale", Boolean(readingProgressState?.stale));
     updateReadingMemoProgress(readingProgressState?.checkpoint);
     updateReadingMemoCurrent();
   }
 
-  function toggleReadingEditor(open, value = "") {
-    if (!readingMemo) return;
+  function readingNotes() {
+    return readingProgressState?.notes || (readingProgressState?.note
+      ? [{ ...readingProgressState.note, id: readingProgressState.note.id || "legacy-note" }] : []);
+  }
+
+  function updateReadingNoteControls() {
+    const editing = !readingMemo.querySelector("[data-reading-role='editor']").hidden;
+    readingMemo.querySelectorAll("[data-reading-action='note'], [data-reading-action='edit-note'], [data-reading-action='delete-note']")
+      .forEach(button => { button.disabled = readingNoteSaving || editing; });
+    readingMemo.querySelectorAll("[data-reading-action='save-note'], [data-reading-action='cancel-note'], textarea")
+      .forEach(control => { control.disabled = readingNoteSaving; });
+  }
+
+  function renderReadingNotes() {
+    const notes = readingNotes();
+    const signature = JSON.stringify(notes);
+    if (signature === readingNotesSignature) return;
+    readingNotesSignature = signature;
+    const list = readingMemo.querySelector("[data-reading-role='notes']");
+    list.replaceChildren();
+    readingMemo.querySelector("[data-reading-role='notes-title']").textContent = `章节便签 · ${notes.length}`;
+    readingMemo.querySelector("[data-reading-role='note-empty']").hidden = notes.length > 0;
+    const groups = new Map();
+    [...notes].sort((a, b) => (a.position.section_index ?? -1) - (b.position.section_index ?? -1)
+      || a.position.scroll_ratio - b.position.scroll_ratio).forEach(note => {
+      const key = note.position.heading_id || note.position.heading_title || "正文";
+      if (!groups.has(key)) {
+        const group = document.createElement("details");
+        group.className = "reader-reading-memo__note-group";
+        group.dataset.chapter = key;
+        const title = document.createElement("summary");
+        title.className = "reader-reading-memo__chapter";
+        title.textContent = note.position.heading_title || "正文";
+        group.appendChild(title);
+        groups.set(key, group);
+        list.appendChild(group);
+      }
+      const card = document.createElement("div");
+      card.className = "reader-reading-memo__detail";
+      card.dataset.noteId = note.id;
+      const text = document.createElement("div");
+      text.dataset.readingRole = "note-text";
+      text.textContent = note.text;
+      card.appendChild(text);
+      const actions = document.createElement("div");
+      actions.className = "reader-reading-memo__actions";
+      [["note-location", "回到原文"], ["edit-note", "编辑"], ["delete-note", "删除"]].forEach(([action, label]) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.dataset.readingAction = action;
+        button.textContent = label;
+        actions.appendChild(button);
+      });
+      card.appendChild(actions);
+      groups.get(key).appendChild(card);
+    });
+    arrangeReadingNotes(true);
+    updateReadingNoteControls();
+  }
+
+  function arrangeReadingNotes(reset = false) {
+    const position = captureReadingPosition();
+    const key = position?.heading_id || position?.heading_title || "正文";
+    const list = readingMemo?.querySelector("[data-reading-role='notes']");
+    if (!list) return;
+    // Reorder only on opening or saving, never while the user is using a card.
+    const groups = [...list.children];
+    groups.forEach(group => {
+      const current = group.dataset.chapter === key;
+      group.classList.toggle("is-current", current);
+      if (reset) group.open = current || group.contains(document.activeElement);
+      const title = group.querySelector("summary");
+      title.setAttribute("aria-label", `${current ? "当前章节，" : ""}${title.textContent}`);
+    });
+    const current = groups.find(group => group.dataset.chapter === key);
+    if (current) list.prepend(current);
+  }
+
+  function toggleReadingEditor(open, note = null) {
+    if (!readingMemo || readingNoteSaving) return;
     const editor = readingMemo.querySelector("[data-reading-role='editor']");
     const textarea = readingMemo.querySelector("textarea");
     editor.hidden = !open;
     if (open) {
-      textarea.value = value;
-      textarea.focus();
+      readingNoteId = note?.id || null;
+      readingNotePosition = note?.position || captureReadingPosition();
+      readingMemo.querySelector("[data-reading-role='editor-position']").textContent = `关联章节：${readingNotePosition?.heading_title || "正文"}`;
+      textarea.value = note?.text || "";
+    } else {
+      readingNoteId = undefined;
+      readingNotePosition = undefined;
     }
+    updateReadingNoteControls();
+    if (open) textarea.focus();
+    else readingMemo.querySelector("[data-reading-action='note']").focus();
   }
 
-  function updateReadingLocatorPreview() {
-    const select = readingMemo?.querySelector("[data-reading-role='locator-heading']");
-    const preview = readingMemo?.querySelector("[data-reading-role='locator-preview']");
-    if (!select || !preview) return;
-    const index = Number(select.selectedOptions[0]?.dataset.index);
-    const heading = readingProgressHeadings[index];
-    const range = readingMemo.querySelector("[data-reading-role='locator-offset']");
-    const output = readingMemo.querySelector("[data-reading-role='locator-offset-value']");
-    const sectionOffset = index < 0 ? 0 : clamp(Number(range?.value) / 100);
-    if (range) range.disabled = index < 0;
-    if (output) output.textContent = index < 0 ? "" : `${Math.round(sectionOffset * 100)}%`;
-    const position = readingPositionForHeading(heading, index, sectionOffset);
-    preview.textContent = position ? `将定位到：${readingPositionLabel(position)}` : "请选择章节";
-  }
-
-  function populateReadingLocator() {
-    const select = readingMemo?.querySelector("[data-reading-role='locator-heading']");
-    if (!select) return;
-    select.replaceChildren();
-    const documentStart = document.createElement("option");
-    documentStart.value = "__document_start__";
-    documentStart.dataset.index = "-1";
-    documentStart.textContent = "文档开头";
-    select.appendChild(documentStart);
-    readingProgressHeadings.forEach((heading, index) => {
-      const option = document.createElement("option");
-      option.value = heading.id || String(index);
-      option.dataset.index = String(index);
-      option.textContent = `${index + 1}. ${heading.textContent.replace(/\s*\u00b6\s*$/, "").trim()}`;
-      select.appendChild(option);
-    });
-    const resumePosition = readingProgressState?.resume_position || readingProgressState?.checkpoint;
-    const selectedIndex = readingProgressHeadings.findIndex(heading =>
-      heading.id && heading.id === resumePosition?.heading_id
-    );
-    if (selectedIndex >= 0) select.value = readingProgressHeadings[selectedIndex].id || String(selectedIndex);
-    else if (!resumePosition?.heading_id) select.value = "__document_start__";
-    readingMemo.querySelector("[data-reading-role='locator-offset']").value = "0";
-    updateReadingLocatorPreview();
-  }
-
-  function toggleReadingLocator(open) {
-    if (!readingMemo) return;
-    const locator = readingMemo.querySelector("[data-reading-role='locator']");
-    locator.hidden = !open;
-    if (open) {
-      populateReadingLocator();
-      readingMemo.querySelector("[data-reading-role='locator-heading']")?.focus();
-    }
-  }
-
-  async function saveReadingLocator() {
+  async function saveReadingLocation(position, save) {
     if (!readingMemo || !readingProgressToken || !readingProgressDocument) return;
-    const select = readingMemo.querySelector("[data-reading-role='locator-heading']");
-    const save = readingMemo.querySelector("[data-reading-action='save-location']");
-    const index = Number(select?.selectedOptions[0]?.dataset.index);
-    const sectionOffset = clamp(Number(
-      readingMemo.querySelector("[data-reading-role='locator-offset']")?.value
-    ) / 100);
-    const position = readingPositionForHeading(readingProgressHeadings[index], index, sectionOffset);
     if (!position) return;
+    clearTimeout(readingProgressSaveTimer);
+    readingProgressPendingPosition = null;
     save.disabled = true;
     const generation = readingProgressGeneration;
     const token = readingProgressToken;
@@ -383,9 +354,7 @@
       if (generation !== readingProgressGeneration) return;
       readingProgressState = value;
       readingProgressLastSignature = readingPositionSignature(value?.checkpoint || readingProgressState?.checkpoint);
-      toggleReadingLocator(false);
       renderReadingMemo();
-      restoreReadingPosition(value?.resume_position || position);
     } catch (error) {
       if (generation === readingProgressGeneration) {
         readingMemo?.querySelector("[data-reading-role='status']")?.replaceChildren(
@@ -461,12 +430,12 @@
     readingProgressSaveTimer = setTimeout(() => flushReadingCheckpoint(false), 900);
   }
 
-  function restoreReadingPosition(checkpoint) {
+  function restoreReadingPosition(checkpoint, stale = readingProgressState?.stale) {
     if (!checkpoint || !readingProgressArticle) return;
     clearTimeout(readingProgressSaveTimer);
     readingProgressPendingPosition = null;
     readingProgressSuppress = true;
-    let block = !readingProgressState?.stale && checkpoint.block_id
+    let block = !stale && checkpoint.block_id
       ? readingProgressArticle.querySelector(`[data-reader-block="${CSS.escape(checkpoint.block_id)}"]`)
       : null;
     const heading = checkpoint.heading_id
@@ -499,16 +468,17 @@
   }
 
   async function saveReadingNote() {
-    if (!readingMemo || !readingProgressToken || !readingProgressDocument) return;
+    if (!readingMemo || !readingProgressToken || !readingProgressDocument || readingNoteSaving) return;
     const textarea = readingMemo.querySelector("textarea");
-    const save = readingMemo.querySelector("[data-reading-action='save-note']");
     const text = textarea.value.trim();
     if (!text) {
       textarea.focus();
       return;
     }
-    const position = captureReadingPosition();
-    save.disabled = true;
+    const position = readingNotePosition || captureReadingPosition();
+    const noteId = readingNoteId;
+    readingNoteSaving = true;
+    updateReadingNoteControls();
     const generation = readingProgressGeneration;
     const token = readingProgressToken;
     const readingDocument = { ...readingProgressDocument };
@@ -518,6 +488,7 @@
         body: JSON.stringify({
           kind: "document",
           action: "note",
+          note_id: noteId,
           document_id: readingDocument.id,
           document_sha256: readingDocument.sha256,
           text,
@@ -526,6 +497,7 @@
       }, token));
       if (generation !== readingProgressGeneration) return;
       readingProgressState = value;
+      readingNoteSaving = false;
       toggleReadingEditor(false);
       renderReadingMemo();
     } catch (error) {
@@ -535,12 +507,17 @@
         );
       }
     } finally {
-      save.disabled = false;
+      if (generation === readingProgressGeneration) {
+        readingNoteSaving = false;
+        updateReadingNoteControls();
+      }
     }
   }
 
-  async function deleteReadingNote() {
-    if (!readingProgressToken || !readingProgressDocument) return;
+  async function deleteReadingNote(noteId) {
+    if (!readingProgressToken || !readingProgressDocument || readingNoteSaving) return;
+    readingNoteSaving = true;
+    updateReadingNoteControls();
     const generation = readingProgressGeneration;
     const token = readingProgressToken;
     const readingDocument = { ...readingProgressDocument };
@@ -550,19 +527,25 @@
         body: JSON.stringify({
           kind: "document",
           action: "delete_note",
+          note_id: noteId,
           document_id: readingDocument.id,
           document_sha256: readingDocument.sha256
         })
       }, token));
       if (generation !== readingProgressGeneration) return;
       readingProgressState = value;
-      toggleReadingEditor(false);
       renderReadingMemo();
     } catch (error) {
       if (generation === readingProgressGeneration) {
         readingMemo?.querySelector("[data-reading-role='status']")?.replaceChildren(
           window.document.createTextNode(`便签删除失败：${error.message}`)
         );
+      }
+    } finally {
+      if (generation === readingProgressGeneration) {
+        readingNoteSaving = false;
+        updateReadingNoteControls();
+        readingMemo.querySelector("[data-reading-action='note']").focus();
       }
     }
   }
@@ -592,40 +575,29 @@
       '    <button class="reader-reading-memo__close" type="button"',
       '      data-reading-action="toggle-close" title="收起阅读便签" aria-label="收起阅读便签">&#215;</button>',
       '  </div>',
-      '  <div class="reader-reading-memo__status" data-reading-role="status" aria-live="polite">正在读取…</div>',
-      '  <div class="reader-reading-memo__history" data-reading-role="history">历史完整度：0%</div>',
       '  <div class="reader-reading-memo__body">',
-      '    <div class="reader-reading-memo__current" data-reading-role="current" hidden></div>',
+      '    <section class="reader-reading-memo__section">',
+      '    <strong class="reader-reading-memo__label">接着读</strong>',
       '    <div class="reader-reading-memo__resume" data-reading-role="resume-position" hidden></div>',
-      '    <div class="reader-reading-memo__actions">',
-      '      <button type="button" data-reading-action="resume" title="跳转到已保存的恢复位置">继续</button>',
-      '      <button type="button" data-reading-action="locate" title="人工选择下一次恢复阅读的位置">人工定位</button>',
-      '      <button type="button" data-reading-action="note" title="在当前位置写一条便签">写便签</button>',
-      '      <button type="button" data-reading-action="edit-note" title="编辑当前便签" hidden>编辑</button>',
-      '      <button type="button" data-reading-action="delete-note" title="删除当前便签" hidden>删除</button>',
-      '    </div>',
-      '    <div class="reader-reading-memo__locator" data-reading-role="locator" hidden>',
-      '      <label for="reader-reading-location">恢复章节</label>',
-      '      <select id="reader-reading-location" data-reading-role="locator-heading"></select>',
-      '      <label for="reader-reading-location-offset">章节内位置 <output data-reading-role="locator-offset-value">0%</output></label>',
-      '      <input id="reader-reading-location-offset" data-reading-role="locator-offset" type="range" min="0" max="100" step="5" value="0">',
-      '      <div data-reading-role="locator-preview"></div>',
-      '      <div class="reader-reading-memo__editor-actions">',
-      '        <button type="button" data-reading-action="save-location">保存并跳转</button>',
-      '        <button type="button" data-reading-action="cancel-location">取消</button>',
-      '      </div>',
-      '    </div>',
-      '    <div class="reader-reading-memo__detail" data-reading-role="detail" hidden>',
-      '      <span class="reader-reading-memo__note-label">便签</span>',
-      '      <span data-reading-role="note-text"></span>',
-      '    </div>',
+      '    <div class="reader-reading-memo__status" data-reading-role="status" aria-live="polite">正在读取…</div>',
+      '    <button class="reader-reading-memo__primary" type="button" data-reading-action="resume">回到续读位置</button>',
+      '    <div class="reader-reading-memo__current" data-reading-role="current" hidden></div>',
+      '    <button type="button" data-reading-action="save-current" title="将当前阅读位置保存为续读点，保留最远浏览进度">下次从这里读</button>',
+      '    </section>',
+      '    <section class="reader-reading-memo__section">',
+      '    <strong class="reader-reading-memo__label" data-reading-role="notes-title">章节便签</strong>',
+      '    <button type="button" data-reading-action="note">＋ 为当前章节添加便签</button>',
+      '    <div class="reader-reading-memo__empty" data-reading-role="note-empty">记下疑问或下一步，每条便签都能带你回到原文。</div>',
       '    <div class="reader-reading-memo__editor" data-reading-role="editor" hidden>',
-      '      <textarea maxlength="2000" rows="3" aria-label="便签内容" placeholder="写下这篇文档的便签"></textarea>',
+      '      <div class="reader-reading-memo__current" data-reading-role="editor-position"></div>',
+      '      <textarea maxlength="2000" rows="3" aria-label="便签内容" placeholder="例如：还没理解这个 baseline 为什么无偏，下次从这里推一遍。"></textarea>',
       '      <div class="reader-reading-memo__editor-actions">',
-      '        <button type="button" data-reading-action="save-note">保存</button>',
+      '        <button type="button" data-reading-action="save-note">保存便签</button>',
       '        <button type="button" data-reading-action="cancel-note">取消</button>',
       '      </div>',
       '    </div>',
+      '    <div class="reader-reading-memo__notes" data-reading-role="notes"></div>',
+      '    </section>',
       '  </div>',
       '</div>'
     ].join("");
@@ -643,21 +615,27 @@
     });
     memo.querySelector("[data-reading-action='resume']").addEventListener("click", () => {
       restoreReadingPosition(readingProgressState?.resume_position || readingProgressState?.checkpoint);
+      setReadingMemoExpanded(false);
     });
-    memo.querySelector("[data-reading-action='locate']").addEventListener("click", () => {
-      toggleReadingLocator(true);
+    memo.querySelector("[data-reading-action='save-current']").addEventListener("click", event => {
+      saveReadingLocation(captureReadingPosition(), event.currentTarget);
     });
-    memo.querySelector("[data-reading-action='note']").addEventListener("click", () => {
-      toggleReadingEditor(true, readingProgressState?.note?.text || "");
+    memo.querySelector("[data-reading-action='note']").addEventListener("click", () => toggleReadingEditor(true));
+    memo.querySelector("[data-reading-role='notes']").addEventListener("click", event => {
+      const button = event.target.closest("button[data-reading-action]");
+      const card = button?.closest("[data-note-id]");
+      const note = readingNotes().find(item => item.id === card?.dataset.noteId);
+      if (!note) return;
+      if (button.dataset.readingAction === "note-location") {
+        const stale = note.document_sha256 ? note.document_sha256 !== readingProgressDocument.sha256 : readingProgressState?.stale;
+        restoreReadingPosition(note.position, stale);
+        setReadingMemoExpanded(false);
+      } else if (button.dataset.readingAction === "edit-note") {
+        toggleReadingEditor(true, note);
+      } else if (button.dataset.readingAction === "delete-note") {
+        deleteReadingNote(note.id);
+      }
     });
-    memo.querySelector("[data-reading-action='edit-note']").addEventListener("click", () => {
-      toggleReadingEditor(true, readingProgressState?.note?.text || "");
-    });
-    memo.querySelector("[data-reading-action='delete-note']").addEventListener("click", deleteReadingNote);
-    memo.querySelector("[data-reading-action='save-location']").addEventListener("click", saveReadingLocator);
-    memo.querySelector("[data-reading-action='cancel-location']").addEventListener("click", () => toggleReadingLocator(false));
-    memo.querySelector("[data-reading-role='locator-heading']").addEventListener("change", updateReadingLocatorPreview);
-    memo.querySelector("[data-reading-role='locator-offset']").addEventListener("input", updateReadingLocatorPreview);
     memo.querySelector("[data-reading-action='save-note']").addEventListener("click", saveReadingNote);
     memo.querySelector("[data-reading-action='cancel-note']").addEventListener("click", () => toggleReadingEditor(false));
     memo.querySelector("textarea").addEventListener("keydown", event => {
@@ -683,6 +661,10 @@
     readingMemo = undefined;
     readingProgressVisualPosition = undefined;
     readingMemoExpanded = false;
+    readingNotePosition = undefined;
+    readingNoteId = undefined;
+    readingNoteSaving = false;
+    readingNotesSignature = "";
     readingProgressToken = "";
     readingProgressDocument = undefined;
     readingProgressArticle = undefined;
@@ -704,9 +686,7 @@
     const controller = new AbortController();
     readingProgressAbort = controller;
     try {
-      const bootstrapResponse = await fetch("/api/bootstrap", { cache: "no-store", signal: controller.signal });
-      if (!bootstrapResponse.ok) throw new Error("reading service unavailable");
-      const bootstrap = await bootstrapResponse.json();
+      const bootstrap = await readingApi("/api/bootstrap", { signal: controller.signal });
       if (generation !== readingProgressGeneration) return;
       readingProgressToken = bootstrap.token || "";
       const state = await readingApi(
@@ -791,7 +771,7 @@
       entries.forEach(({ target }) => {
         const overflowing = target.scrollWidth > target.clientWidth + 2;
         const hint = target.nextElementSibling;
-        if (hint?.classList.contains("reader-table-hint")) hint.hidden = !overflowing;
+        if (hint?.matches(".reader-table-hint, .reader-math-hint")) hint.hidden = !overflowing;
         target.tabIndex = overflowing ? 0 : -1;
       });
     });
@@ -813,6 +793,20 @@
       }
       tableResizeObserver.observe(wrapper);
     });
+    article.querySelectorAll("div.arithmatex").forEach(formula => {
+      formula.setAttribute("role", "region");
+      formula.setAttribute("aria-label", "公式，可横向滚动查看");
+      let hint = formula.nextElementSibling;
+      if (!hint?.classList.contains("reader-math-hint")) {
+        hint = document.createElement("div");
+        hint.className = "reader-math-hint";
+        // Keep navigation hints out of copied text and AI selection contexts.
+        hint.setAttribute("aria-hidden", "true");
+        hint.hidden = true;
+        formula.after(hint);
+      }
+      tableResizeObserver.observe(formula);
+    });
   }
 
   function initialize() {
@@ -831,11 +825,19 @@
       toggle.type = "button";
       toggle.className = "reader-nav-toggle";
       toggle.addEventListener("click", () => {
+        const drawer = document.getElementById("__drawer");
+        if (window.matchMedia("(max-width: 76.1875em)").matches && drawer) {
+          drawer.checked = !drawer.checked;
+          drawer.dispatchEvent(new Event("change", { bubbles: true }));
+          apply(false);
+          return;
+        }
         const collapsed = !document.body.classList.contains("reader-nav-collapsed");
         localStorage.setItem(storageKey, String(collapsed));
         apply(collapsed);
       });
       document.body.appendChild(toggle);
+      document.getElementById("__drawer")?.addEventListener("change", () => apply(localStorage.getItem(storageKey) === "true"));
     }
     if (toggle) apply(localStorage.getItem(storageKey) === "true");
     buildSectionTools();
@@ -862,10 +864,13 @@
       '  <span></span><small></small>',
       '</button>',
       '<button class="reader-section-tools__step" type="button" data-section-step="next" title="下一节">›</button>',
+      '<button class="reader-appearance-focus" type="button" data-reader-focus aria-pressed="false" title="收起两侧栏，专注阅读">专注</button>',
+      '<button class="reader-appearance-toggle" type="button" data-reader-appearance aria-expanded="false" aria-controls="reader-appearance-panel" aria-label="阅读设置" title="阅读设置">Aa</button>',
       '<div class="reader-section-tools__menu" hidden></div>'
     ].join("");
     const anchor = article.querySelector(".paper-reading-card") || article.querySelector("h1");
     anchor?.insertAdjacentElement("afterend", sectionTools);
+    window.ReaderAppearance?.mount(sectionTools);
     const updateClearance = () => {
       const top = parseFloat(getComputedStyle(sectionTools).top) || 0;
       article.style.setProperty("--reader-scroll-clearance", `${top + sectionTools.offsetHeight + 24}px`);
@@ -879,7 +884,11 @@
       const button = document.createElement("button");
       button.type = "button";
       button.dataset.sectionIndex = String(index);
-      button.innerHTML = `<small>${String(index + 1).padStart(2, "0")}</small><span>${heading.textContent.trim()}</span>`;
+      const number = document.createElement("small");
+      number.textContent = String(index + 1).padStart(2, "0");
+      const label = document.createElement("span");
+      label.textContent = heading.textContent.replace(/\s*\u00b6\s*$/, "").trim();
+      button.append(number, label);
       button.addEventListener("click", () => {
         menu.hidden = true;
         sectionTools.querySelector(".reader-section-tools__current").setAttribute("aria-expanded", "false");
@@ -903,7 +912,7 @@
       const available = Math.max(1, article.scrollHeight - window.innerHeight * 0.7);
       const percentage = Math.max(0, Math.min(100, ((window.scrollY - articleTop) / available) * 100));
       sectionTools.style.setProperty("--reader-progress", percentage + "%");
-      current.querySelector("span").textContent = headings[activeIndex].textContent.trim();
+      current.querySelector("span").textContent = headings[activeIndex].textContent.replace(/\s*\u00b6\s*$/, "").trim();
       current.querySelector("small").textContent = `${activeIndex + 1} / ${headings.length}`;
       previous.disabled = activeIndex === 0;
       next.disabled = activeIndex === headings.length - 1;
@@ -945,4 +954,9 @@
   else initialize();
 
   window.addEventListener("reader:tool-dock-change", () => placeReadingMemo());
+  window.addEventListener("reader:appearance-change", () => placeReadingMemo());
+  window.addEventListener("resize", () => {
+    placeReadingMemo();
+    apply(localStorage.getItem(storageKey) === "true");
+  });
 })();

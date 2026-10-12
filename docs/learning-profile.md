@@ -1,5 +1,11 @@
 # Personalized Learning and Explanation Profile
 
+## Current editorial preference (2026-09-19)
+
+The user explicitly requested a corpus-wide revision for readability, research quality and concise conclusions. This supersedes the rigid section-count requirements later in this historical profile: use those items as internal review questions, not mandatory visible sections. Start with the actual contribution and its scope; carry one concrete example through the mechanism; preserve useful depth and remove repeated opening guides and recap lists. Older papers warrant detail where their mechanism still matters, not lengthy treatment merely because they are famous.
+
+Current evidence: all 230 available Reader user turns, the questions/personal notes of 43 saved notes, and 29 accepted revision instructions were read; the entire assistant-answer corpus has not yet been read. Recent questions emphasize sequence probability versus logits, expectations/KL, gradient paths, training versus decoding, and computation versus cached state. The learner has also explicitly confirmed progress on causal masking and contextual representations. Do not assume earlier questions indicate permanent gaps. Local evidence and per-document progress: `tasks/paper-research-base-knowledge-about-llm-20260717/state/editorial-20260919/`.
+
 ## Learner Positioning
 
 The learner is best described as a **proficient engineering practitioner moving toward a research-oriented engineer**.

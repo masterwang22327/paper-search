@@ -1,0 +1,94 @@
+site_name: LLM 基础论文研究手册
+site_description: 面向工程型算法工程师的 LLM 基础论文、机制谱系与证据目录
+site_dir: !ENV [READER_SITE_DIR, site]
+docs_dir: !ENV [READER_DOCS_DIR, docs]
+use_directory_urls: true
+strict: true
+hooks:
+  - hooks.py
+
+theme:
+  name: material
+  custom_dir: overrides
+  language: zh
+  font: false
+  features:
+    # Each document owns its PDF/chat state. Use full navigation with a
+    # prerendered studio shell until those lifecycles support instant navigation.
+    - navigation.sections
+    - navigation.top
+    - navigation.tracking
+    - search.highlight
+    - search.share
+    - search.suggest
+    - toc.follow
+    - content.code.copy
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: deep purple
+      toggle:
+        icon: material/brightness-7
+        name: 切换到深色模式
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: deep purple
+      toggle:
+        icon: material/brightness-4
+        name: 切换到浅色模式
+
+plugins:
+  - search:
+      lang:
+        - zh
+        - en
+  - literate-nav:
+      nav_file: SUMMARY.md
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      toc_depth: 3
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+
+extra_css:
+  - stylesheets/document-importance.css?v=20260916-1
+  - stylesheets/extra.css?v=20260826-1
+  - stylesheets/concept-labs.css?v=20260904-1
+  - stylesheets/knowledge-assistant.css?v=20260917-compact-chat
+
+extra_javascript:
+  - javascripts/reader-api.js?v=20260916-1
+  - javascripts/mathjax.js?v=20260908-navigation-1
+  - javascripts/external-links.js?v=20260820-1
+  - javascripts/evidence-panel.js?v=20260919-stable-shell
+  - vendor/markdown-it.min.js?v=15.0.1
+  - vendor/markdown-it-texmath.js?v=1.0.0
+  - javascripts/knowledge-assistant.js?v=20260917-compact-chat
+  - javascripts/reader-layout.js?v=20260916-1
+  - javascripts/document-importance.js?v=20260916-2
+  - javascripts/concept-labs.js?v=20260919-swa-exact
+  - vendor/mathjax/tex-mml-chtml.js
+
+extra:
+  generator: false
+
+copyright: 本站由原始调研 Markdown 自动生成；tasks 目录始终是唯一事实来源。

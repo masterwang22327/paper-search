@@ -1,5 +1,78 @@
 {% extends "base.html" %}
 
+{% block header %}
+  {% set reader_evidence = page.meta.get("reader_evidence", {}) if page else {} %}
+  <script>
+    // Apply layout before either header or the article can be painted.
+    (() => {
+      const available = {{ (reader_evidence | length > 0) | tojson }};
+      const layout = { open: false, pane: "translation", companion: "translation" };
+      try {
+        const saved = JSON.parse(sessionStorage.getItem("reader-studio-layout") || "null");
+        if (saved && ["pdf", "insight", "translation", "assistant", "faq"].includes(saved.pane)) {
+          layout.open = available && saved.open === true;
+          layout.pane = saved.pane;
+          if (["insight", "translation", "assistant", "faq"].includes(saved.companion)) {
+            layout.companion = saved.companion;
+          }
+        }
+      } catch (_) {}
+      window.__readerInitialLayout = layout;
+      document.body.classList.toggle("evidence-panel-available", available);
+      document.body.classList.toggle("evidence-panel-open", layout.open);
+      document.body.classList.toggle("reader-pdf-focus", layout.open);
+      {% if page and (page.file.src_uri.startswith("papers/") or page.file.src_uri == "report/index.md") %}
+      document.body.classList.add("reader-research-page");
+      {% endif %}
+      window.__readerBaseScheme = document.body.dataset.mdColorScheme || "default";
+      try {
+        const reading = JSON.parse(localStorage.getItem("reader-appearance") || "{}");
+        if ([16, 18, 20].includes(reading.font)) document.body.style.setProperty("--reader-font-size", `${reading.font}px`);
+        if ([800, 960, 1120].includes(reading.width)) document.body.style.setProperty("--reader-text-width", `${reading.width}px`);
+        document.body.classList.toggle("reader-focus-mode", reading.focus === true);
+        if (["default", "warm", "dark"].includes(reading.tone)) {
+          document.body.dataset.readerTone = reading.tone;
+          if (document.body.classList.contains("reader-research-page") && reading.tone !== "default") {
+            document.body.dataset.mdColorScheme = reading.tone === "dark" ? "slate" : "default";
+          }
+        }
+      } catch (_) {}
+      try {
+        document.body.classList.toggle("reader-nav-collapsed",
+          localStorage.getItem("research-reader-navigation-collapsed") === "true");
+        const share = Math.max(20, Math.min(45, Number(localStorage.getItem("reader-document-share")) || 30));
+        document.body.style.setProperty("--reader-document-share", `${share}vw`);
+      } catch (_) {}
+    })();
+  </script>
+  {% include "partials/reader-studio.html" %}
+  <script>
+    (() => {
+      const panel = document.querySelector(".reader-studio");
+      const { open, pane } = window.__readerInitialLayout;
+      panel.dataset.readerActivePane = pane;
+      panel.querySelectorAll("[data-reader-tab]").forEach(button => {
+        const selected = open && button.dataset.readerTab === pane;
+        button.classList.toggle("is-active", selected);
+        button.setAttribute("aria-pressed", String(selected));
+      });
+      panel.querySelectorAll("[data-reader-columns]").forEach(button => {
+        button.setAttribute("aria-pressed", String(button.dataset.readerColumns === (open ? (pane === "pdf" ? "2" : "3") : "1")));
+      });
+      panel.querySelectorAll("[data-reader-pane]").forEach(element => {
+        element.classList.toggle("is-active", element.dataset.readerPane === "pdf" || element.dataset.readerPane === pane);
+      });
+      try {
+        const share = Math.max(35, Math.min(70, Number(localStorage.getItem("reader-paper-share")) || 54));
+        panel.style.setProperty("--paper-share", `${share}%`);
+      } catch (_) {}
+      const height = panel.querySelector(".reader-studio-bar").offsetHeight;
+      if (height) document.body.style.setProperty("--reader-bar-height", `${height}px`);
+    })();
+  </script>
+  {{ super() }}
+{% endblock %}
+
 {% block site_meta %}
   <meta charset="utf-8">
   {% if page.meta and page.meta.description %}

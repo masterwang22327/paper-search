@@ -237,6 +237,7 @@ def run() -> None:
             '<a class="evidence-link" href="../../sources/arxiv-2305.14314v1/paper.pdf#page=1" '
             'data-pdf="../../sources/arxiv-2305.14314v1/paper.pdf" data-page="1" '
             'data-source-id="arxiv-2305.14314v1" data-source-title="QLoRA" '
+            'data-open-translation="true" '
             'data-external-url="https://arxiv.org/abs/2305.14314">QLoRA</a>'
         )
         assert prepare_docs.linkify(

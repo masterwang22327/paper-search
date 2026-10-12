@@ -54,12 +54,18 @@ def run(base):
         page.locator("#insight-toggle").click()
         expect(page.locator("#insight-status")).to_have_text("尚未生成")
         assert not posts
-        page.locator("#insight-model").select_option("gpt-6-astra")
+        page.locator(".insight-options summary").click()
+        for model in ("gpt-6-astra", "gpt-6.1-sol"):
+            page.locator("#insight-model").select_option(model)
+            page.locator("#insight-effort").select_option("low")
+            expect(page.locator("#insight-model").locator("..").locator("span")).to_be_visible()
+            expect(page.locator("#insight-effort").locator("..").locator("span")).to_be_visible()
+        page.locator("#insight-model").select_option("gpt-6.1-sol")
         page.locator("#insight-effort").select_option("low")
-        assert page.locator('#insight-effort option[value="ultra"]').is_disabled()
+        expect(page.locator('#insight-effort option[value="ultra"]')).to_have_attribute("disabled", "")
         page.locator("#generate-insight").click()
         expect(page.locator(".insight-main")).to_have_text("第 3 页的概览结果。")
-        assert posts[-1]["model"] == "gpt-6-astra" and posts[-1]["reasoning_effort"] == "low"
+        assert posts[-1]["model"] == "gpt-6.1-sol" and posts[-1]["reasoning_effort"] == "low"
         expect(page.locator("#generate-insight")).to_have_text("重新解析")
         expect(page.locator(".insight-analysis h3")).to_have_text("1. 掩码如何避免未来信息泄漏")
         expect(page.locator(".insight-analysis .insight-prose p")).to_have_count(3)
@@ -98,7 +104,7 @@ def run(base):
         expect(page.locator("#insight-toggle")).to_be_enabled(timeout=30000)
         page.locator("#insight-toggle").click()
         expect(page.locator(".insight-main")).to_have_text("第 3 页的概览结果。")
-        expect(page.locator("#insight-model")).to_have_value("gpt-6-astra")
+        expect(page.locator("#insight-model")).to_have_value("gpt-6.1-sol")
         expect(page.locator("#insight-effort")).to_have_value("low")
         divider = page.locator("#insight-resizer")
         expect(divider).to_be_visible()

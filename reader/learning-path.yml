@@ -71,7 +71,7 @@ stages:
       - file: peft-adapters-prefix-prompt-qlora.md
         bridge: "LoRA 提供了具体基线；现在保持同一基座、样本和 loss，只改变任务自由度的位置，比较 Adapter、Prefix、Prompt、LoRA 与 QLoRA 谁接收梯度、保存什么、服务时谁仍存在。"
       - file: knowledge-distillation-autoregressive.md
-        bridge: "PEFT 改变可训练对象而不改变监督来源；蒸馏继续固定 rollout 人口与梯度接收者，比较完整 logits、离线 response、外部 teacher，以及 OPSD/SDPO 中同源 teacher 多看的参考解或环境反馈怎样改变信号、显存与长程 credit。"
+        bridge: "依次看token更新、序列概率、学生前缀和特权上下文；KL推导、方法变体与工程细节按需展开。"
 
   - name: "指令、偏好与推理后训练"
     route_type: "主干"
@@ -93,11 +93,11 @@ stages:
       - file: neurips-2023-dpo.md
         bridge: "标准 RLHF 流程明确后，DPO 保持同一 chosen/rejected pair，用 current/reference 四个序列分数直接形成离线 pair loss；显式 RM、critic 和在线 rollout 因而退出这条训练图。"
       - file: process-supervision-test-time-search.md
-        bridge: "PPO 与 DPO 已经说明 generator 怎样更新；现在固定 `17+26` 的两条候选并冻结 generator，把 ORM/PRM 训练、best-of-N 选择和后来用 verifier reward 更新 policy 拆成三种动作。"
+        bridge: "先走完候选生成、步骤标签、评分器训练与推理选择，重算product/min/last排序；可扩展监督转独立专题。"
       - file: reasoning-rl-reductions.md
         bridge: "上一页用 verifier 选择好答案，本页进一步更新 generator：从一次采样与评分进入 RLOO/GRPO，再沿 R1、Dr.GRPO、DAPO、GSPO/SAPO 理解长推理训练的具体问题，最后用 pass@k 区分单次可靠性与解题覆盖。"
       - file: instruct-model-effective-post-training.md
-        bridge: "前面已经分别掌握 SFT、DPO、PPO/GRPO 与 verifier；现在聚焦 released Qwen3-Coder MoE，分开任务直接性、full-parameter 披露和公开工件，先测 success/reward density 与 expert/router 健康，再用四种训练信号和 full-parameter vs expert-aware PEFT 的 matched 实验收口。"
+        bridge: "先读你的模拟反馈场景和对照实验，再按需读知识注入、参数范围与论文证据；不从论文名单开始。"
 
   - name: "多模态、工具调用与运行时安全"
     route_type: "主干"
@@ -107,7 +107,7 @@ stages:
     checkpoint: "面对一条多模态工具轨迹，能否指出视觉 token 在哪里进入 LM、哪个字符串只是候选 action、opaque state 绑定哪个 principal/session、谁拥有授权真值，以及攻击内容怎样被挡在副作用之外？"
     papers:
       - file: multimodal-llm-vision-language-abi.md
-        bridge: "先把数据库控制台截图固定为 `420x840`，沿 `pixels -> visual states -> bridge -> logits -> OCR/coordinate/time parser` 走通视觉输入 ABI；先分清 token 数、时间戳和答案解析，再读 Flamingo/LLaVA/Qwen 的完整配方。"
+        bridge: "先走通224×224图像的patch、投影、视觉编码与拼接，再比较三种连接路线；模型配置与实验按需回查。"
       - file: tool-use-function-calling-abi.md
         bridge: "截图读出的 `snapshot_id=s42` 只是模型上下文；本页将它变成 call tokens，经 parser/schema、permission gate、executor 和数据库终态，接上 ReAct、Toolformer 与 tau-bench 的不同训练/评测对象。"
       - file: agent-runtime-prompt-injection-security.md
@@ -165,7 +165,7 @@ stages:
     checkpoint: "给定一批 query/passage，能否写出正例、batch 内负例、相似度矩阵、NLL 和 Recall@K 分别怎样计算？"
     papers:
       - file: embedding-models-lineage-selection.md
-        bridge: "统一阅读 embedding：从句向量与对比学习，经 E5/BGE/Qwen3 到小模型、多模态、代码、推理式检索和评测；首读第 1–4 章，其余按本篇目录继续。"
+        bridge: "先读相似度、一次对比更新和四次方法变化，再设计固定预算的评测；代码、长文和多模态按需补读。"
       - file: dpr-dense-retrieval.md
         bridge: "通用对比训练路径明确后，把同一组三条 pair 解释为 question/supporting-passage，复算 row-wise NLL，再发布 passage index 并分开 Recall@K、reader EM 与引用支持。"
 
@@ -219,11 +219,11 @@ stages:
       - file: native-sparse-attention.md
         bridge: "固定状态的覆盖与碰撞已经清楚后，NSA 回到仍保存 raw K/V 的中间路线：让末尾 query 用摘要粗查第 2 段、回原文精读 10 分钟，同时看见 window 中第 15 段的 24 小时干扰。"
       - file: arxiv-2403.05530.md
-        bridge: "状态压缩与访问压缩都走完后，把同一 16 段提示交给 Gemini 报告式 evaluator：分别检查单目标、多目标、冲突证据、API error 分母和闭源 checkpoint 边界。"
+        bridge: "先读四类任务和关键结果，再看NLL/MRCR纵轴；分母算例、型号版本与工件集中回查。"
 
   - name: "现代模型系列"
     route_type: "综合验收"
-    purpose: "复用现代 block、数据、后训练、MoE 与长上下文知识，按 Llama、Qwen、DeepSeek 三个家族做版本差分；DeepSeek 在同一篇中串联 LLM、V2、V3、R1、V3.2、V4 与 V4.1。"
+    purpose: "复用现代 block、数据、后训练、MoE 与长上下文知识，按 Llama、Qwen、DeepSeek、GLM、Kimi 五个家族做版本差分；Kimi 新专题串联推理 RL、Muon、并行 Agent、KDA、AttnRes 与 K3。"
     entry: "这是综合验收阶段；若 modern block、MoE、训练系统、后训练或长上下文仍不稳，先回到对应分支，不必硬读。"
     outcome: "读完应能把品牌代际叙述改写成架构、数据、训练信号、系统和评测合同的逐项差分。"
     checkpoint: "面对 Qwen/DeepSeek 新版本，能否画出保留、替换、组合和未知四类变化，并拒绝把整模增益归因给一个组件？"
@@ -231,21 +231,41 @@ stages:
       - file: llama1-llama2-llama31-lineage.md
         bridge: "训练、后训练和长上下文前置都完成后，固定数据库恢复 A/B/C：用 Llama 2/3.1 区分 RM 选择、RS-SFT、PPO、DPO 的内层梯度与跨轮数据刷新。"
       - file: qwen2-qwen25-qwen3-lineage.md
-        bridge: "沿用恢复 A/B/C，把 Llama 的 chosen/rejected 接到 Qwen2 episodic pair、Qwen2.5 fixed pair 与 current-response scalar/group，再分出 Qwen3 多评价器和学生蒸馏。"
+        bridge: "先定位型号，再选择架构、数据或后训练主线；公式推导、型号和来源版本按需展开。"
       - file: deepseek-v2-v3-r1-lineage.md
-        bridge: "用同一个长程修复任务，比较各代怎样存历史、选择证据、激活专家和训练行为；从 MLA 走到 DSA、CSA 与 CSA2，再比较 R1 响应蒸馏和 V4/V4.1 多教师 OPD。"
+        bridge: "按连续代际地图阅读MoE、MLA、R1、DSA和跨层共享；详细算账、训练配置与旁支按需展开。"
+      - file: glm-series-technical-lineage.md
+        bridge: "沿用长程修复任务，串联 GLM 填空、130B 稳定训练、ChatGLM 对齐、4.5 专家统一、5 异步 RL，再区分 5.3 同底座后训练与 Flash 新底座混合注意力。"
+      - file: kimi-series-technical-lineage.md
+        bridge: "从 K1.5 的长推理 RL 走到 K2 的 MuonClip 与工具环境、K2.5 的视觉和 PARL，最后拆解 K3 汇合的 KDA、AttnRes、LatentMoE、多教师 OPD 与混合状态服务。"
+      - file: mimo-series-technical-lineage.md
+        bridge: "从 MiMo-7B 的 RLVR 与连续 rollout 走到 MiMo-VL 的 mixed on-policy，再拆解 MiMo-V2.6 的多环境、Multi-Harness、Group-relative Grader、冻结 Router、异步大 batch 与 reward-hacking 防御；把直播数字按分母和证据边界复核。"
 
-  - name: 20260911论文补读路线
+  - name: 新增论文研究
     route_type: 选读分支
-    purpose: 围绕简历中的 Agent RL 后训练主线补齐奖励、信用分配、目标归约、搜索、蒸馏、评测与系统，并扩展翻译、检索与 F5-TTS。
+    purpose: 持续收录新模型与新论文研究，沿官方证据、训练机制和可验证实验组织独立专题；保留 Agent RL、翻译、检索与 F5-TTS 补读路线。
     entry: 可从本专题入口直接开始；按章节回查 PPO、DPO 和张量/公式前置，不要求读完前面所有阶段。
     outcome: 能把项目方法写成样本、目标、梯度、实验和证据边界，并提出一个可验证的改进。
     checkpoint: 能否对自己的一个项目说清信号来源、优化分母、失败样例、独立评价和下一组消融？
     papers:
     - file: 20260911-reading-route.md
-      bridge: 先沿项目问题选择论文，再按四周路线逐项验收。
+      bridge: 从新增研究索引选择专题，也可继续原有项目论文补读路线。
+    - file: offline-trajectories-sandbox-distillation.md
+      bridge: 比较 Terminal-Universe、SWE-Together 等离线轨迹重建方案，按输入条件选择代码与业务环境路线，明确需补知识、源码与真实性验证。
+    - file: recursive-self-improvement.md
+      bridge: 沿自训练、程序演化与元层改进三条路线，核对STOP、DGM、Hyperagents等的实际产物、量化收益与成本，再追固定源码设计离线环境恢复实验。
+    - file: needle3-causal-convolution.md
+      bridge: 从端侧工具调用进入 QKV 三抽头卷积与 Engram 膨胀卷积，手算历史依赖和缓存成本，再连接 GQA、结构化 MLP、深度裁剪与可验证消融。
+    - file: cross-model-latent-communication.md
+      bridge: 从文本思维链进入 hidden/KV 桥接与 prefill/decode 分工，核对冻结梯度、通信代价、速度基线和迁移失败。
+    - file: jev-system-one-rlcd.md
+      bridge: 从结构化决策接口进入概率校准、适当评分规则与 RL 训练，区分 JEV 官方披露、相关论文与待验证假设。
+    - file: dart-sd-vake-structured-post-training.md
+      bridge: 对比 DART-SD 的图引导局部蒸馏与 VAKE 的两阶段知识激活，追踪状态、监督范围、奖励和实验边界。
     - file: 20260911-reward-shaping.md
       bridge: 先分清真实目标、参考相似度和潜势差分，再讨论更细的奖励。
+    - file: rule-reward-design-binary-partial-credit.md
+      bridge: 从 MiMo code 的真实 0/1 验收进入部分信用与成功解质量评分，比较近期直接对照，并区分奖励粒度、反馈时机与优势归一化。
     - file: 20260911-credit-assignment.md
       bridge: 奖励定义后，判断当前轮的优势到底来自哪个状态和比较组。
     - file: 20260911-grpo-objectives.md
@@ -259,8 +279,8 @@ stages:
     - file: 20260911-rl-systems.md
       bridge: 评价合同固定后，检查采样、权重同步和异步更新是否对应同一分布。
     - file: 20260911-translation.md
-      bridge: 用十二问连接 NLLB 的剪枝、词表、训练、偏好选择与长链翻译，并逐项验证。
+      bridge: "先看600M架构与参数账，再按压缩、词表、训练或动态术语选分支；最后用统一实验路线决定下一步。"
     - file: 20260911-retrieval-sql.md
       bridge: 再分开摘要索引、跨层召回与 SQL 解析约束解决的问题。
     - file: 20260911-f5tts.md
-      bridge: 最后沿文本、mel、向量场和波形，解释质量与首包时延的来源。
+      bridge: 从音色微调、LLM 多音字纠正与文本正则的已有经验出发，先补语音表示和发展背景，再理解 CFM loss、模型模块与流式调度。

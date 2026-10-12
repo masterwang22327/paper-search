@@ -9,10 +9,11 @@ fi
 TASK_ID=$1
 USER_DIR="$READER_DIR/user-data/$TASK_ID"
 
-if [ ! -x "$READER_DIR/.venv/bin/mkdocs" ]; then
-  python3 -m venv "$READER_DIR/.venv"
-  PIP_CERT=${PIP_CERT:-/etc/ssl/cert.pem} \
-    "$READER_DIR/.venv/bin/python" -m pip install -r "$READER_DIR/requirements.txt"
+. "$READER_DIR/setup.sh"
+
+if [ -z "${CODEX_HOME:-}" ] && [ -f "$READER_DIR/../.reader-codex/config.toml" ]; then
+  CODEX_HOME=$(CDPATH= cd -- "$READER_DIR/../.reader-codex" && pwd)
+  export CODEX_HOME
 fi
 
 if [ -d "$USER_DIR/translations" ]; then
@@ -36,4 +37,4 @@ else
     --database "$USER_DIR/site.sqlite3"
 fi
 
-"$READER_DIR/.venv/bin/python" "$READER_DIR/server.py" --task-id "$TASK_ID" --port 8000
+"$READER_DIR/.venv/bin/python" "$READER_DIR/server.py" --task-id "$TASK_ID" --port "${READER_PORT:-8000}"

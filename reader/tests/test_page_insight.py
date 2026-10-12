@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import io
 import json
 import sys
@@ -26,6 +27,9 @@ ANSWER = {
     "caveats": [],
 }
 ANSWER["sections"][0]["source_regions"] = []
+ANSWER["sections"][0]["motivation"] = "训练时完整答案已经可见，需要避免模型提前偷看后面的词。"
+ANSWER["sections"][0]["claim_type"] = "方法设计"
+ANSWER["modern_view"] = {"summary": "从自回归建模的基本原理理解，预测下一个词只能使用已知前缀。这是概念解释，并未核验最新研究。", "sources": []}
 
 
 class PageInsightTests(unittest.TestCase):
@@ -45,7 +49,7 @@ class PageInsightTests(unittest.TestCase):
         self.state.pdf_page_count = mock.Mock(return_value=4)
         self.state.pdf_page_text = mock.Mock(side_effect=lambda source, page: f"Original text on page {page}")
         self.state.call_responses_api = mock.Mock(return_value=(json.dumps(ANSWER), "response-id"))
-        self.payload = {"source_id": "test-paper", "page": 3, "model": "gpt-5.6-terra", "reasoning_effort": "medium"}
+        self.payload = {"source_id": "test-paper", "page": 3, "model": "gpt-6.1-sol", "reasoning_effort": "medium"}
 
     def test_manual_only_and_persistent_cache(self):
         self.assertEqual(self.state.page_insight_state(self.payload), {"insight": None, "cached": False})
@@ -76,6 +80,9 @@ class PageInsightTests(unittest.TestCase):
         self.assertEqual(evidence["preceding_pages"][0]["physical_page"], 1)
         self.assertEqual(kwargs["model"], self.payload["model"])
         self.assertEqual(kwargs["reasoning_effort"], "medium")
+        self.assertEqual(evidence["reading_date"], server.now_iso()[:10])
+        self.assertTrue(evidence["reading_timezone"])
+        self.assertTrue(kwargs["web_search"])
 
     def test_cache_separates_model_effort_page_file_and_prompt(self):
         self.state.generate_page_insight(self.payload)
@@ -101,11 +108,24 @@ class PageInsightTests(unittest.TestCase):
         self.state.call_responses_api.return_value = (json.dumps(ANSWER), "id")
         self.assertFalse(self.state.generate_page_insight({**self.payload, "force": True})["cached"])
 
+    def test_new_models_and_low_effort_reach_responses_api(self):
+        for model in sorted(server.REVISION_MODELS):
+            with self.subTest(model=model):
+                result = self.state.generate_page_insight({
+                    **self.payload, "model": model, "reasoning_effort": "low",
+                })
+                self.assertEqual(result["insight"]["model"], model)
+                self.assertEqual(result["insight"]["reasoning_effort"], "low")
+                kwargs = self.state.call_responses_api.call_args.kwargs
+                self.assertEqual(kwargs["model"], model)
+                self.assertEqual(kwargs["reasoning_effort"], "low")
+
     def test_invalid_requests_never_call_model(self):
         for changes in (
             {"page": 0}, {"page": 5}, {"page": 1.5}, {"page": True}, {"page": "oops"},
             {"model": []}, {"model": "unknown"}, {"reasoning_effort": []},
-            {"reasoning_effort": "low"}, {"model": "gpt-6-astra", "reasoning_effort": "ultra"},
+            {"reasoning_effort": "invalid"}, {"model": "gpt-6-astra", "reasoning_effort": "ultra"},
+            {"model": "gpt-6.1-sol", "reasoning_effort": "ultra"}, {"model": "gpt-5.6-sol"},
             {"source_id": "../bad"},
         ):
             with self.subTest(changes=changes), self.assertRaises(server.ApiError) as raised:
@@ -183,11 +203,69 @@ class PageInsightTests(unittest.TestCase):
         self.assertEqual(request["model"], "gpt-6-astra")
         self.assertEqual(request["reasoning"]["effort"], "low")
         self.assertFalse(request["store"])
-        self.assertNotIn("tools", request)
+        self.assertEqual(request["tools"], [{"type": "web_search", "search_context_size": "low"}])
+        self.assertEqual(request["include"], ["web_search_call.action.sources"])
         image = request["input"][1]["content"][1]
         self.assertEqual(base64.b64decode(image["image_url"].split(",")[1]), png)
         self.assertEqual(image["detail"], "high")
         self.assertEqual(request["text"]["format"]["name"], "paper_page_insight")
+
+    def test_reading_date_invalidates_cache(self):
+        with mock.patch.object(server, "now_iso", return_value="2026-09-17T10:00:00+08:00"):
+            self.state.generate_page_insight(self.payload)
+        with mock.patch.object(server, "now_iso", return_value="2026-09-18T10:00:00+08:00"):
+            self.assertIsNone(self.state.page_insight_state(self.payload)["insight"])
+
+    def test_sources_must_come_from_search_events(self):
+        answer = copy.deepcopy(ANSWER)
+        answer["modern_view"] = {"summary": "后续研究的解释 [1]。", "sources": [
+            {"title": "Follow-up", "url": "https://example.org/paper", "published": "2025-01-01"}]}
+        self.state.call_responses_api.return_value = (json.dumps(answer), "id")
+        result = self.state.generate_page_insight(self.payload)["insight"]
+        self.assertEqual(result["content"]["modern_view"]["sources"], [])
+        self.assertIn("未通过核对", result["content"]["modern_view"]["summary"])
+        self.assertEqual(result["freshness"]["status"], "unverified")
+        def searched(*args, **kwargs):
+            self.state.record_search_evidence(kwargs["search_evidence"], {
+                "type": "web_search_call", "status": "completed", "action": {
+                    "sources": [{"url": "https://example.org/paper"}]}})
+            return json.dumps(answer), "id"
+        self.state.call_responses_api.side_effect = searched
+        result = self.state.generate_page_insight({**self.payload, "force": True})["insight"]
+        self.assertEqual(result["freshness"]["status"], "verified")
+        self.assertEqual(result["content"]["modern_view"], answer["modern_view"])
+        answer["modern_view"]["sources"][0]["published"] = "2999-01-01"
+        result = self.state.generate_page_insight({**self.payload, "force": True})["insight"]
+        self.assertEqual(result["freshness"]["status"], "unverified")
+        self.assertEqual(result["content"]["modern_view"]["sources"], [])
+
+    def test_search_unavailable_falls_back_without_claiming_freshness(self):
+        self.state.call_responses_api.side_effect = [
+            server.ApiError(502, "unsupported", code="web_search_unavailable"),
+            (json.dumps(ANSWER), "id")]
+        result = self.state.generate_page_insight(self.payload)["insight"]
+        self.assertEqual(result["freshness"]["status"], "unavailable")
+        self.assertFalse(self.state.call_responses_api.call_args.kwargs["web_search"])
+        self.assertIn("搜索服务不可用", self.state.call_responses_api.call_args.kwargs["system_prompt"])
+
+    def test_unknown_claim_type_rejected(self):
+        invalid = copy.deepcopy(ANSWER)
+        invalid["sections"][0]["claim_type"] = "普适真理"
+        with self.assertRaises(server.ApiError):
+            self.state.validate_page_insight(invalid)
+
+    def test_transport_falls_back_when_search_connection_drops(self):
+        del self.state.call_responses_api
+        self.state.render_pdf_page = mock.Mock(side_effect=lambda context, path: path.write_bytes(b"image"))
+        self.state.load_translation_api_url = mock.Mock(return_value="https://provider.test/v1/responses")
+        self.state.load_translation_api_key = mock.Mock(return_value="test-key")
+        self.state.translation_ssl_context = None
+        stream = io.BytesIO(("data: " + json.dumps({"type": "response.output_text.delta", "delta": json.dumps(ANSWER)}) + "\n\n").encode())
+        with mock.patch.object(server, "urlopen", side_effect=[server.http.client.RemoteDisconnected(), stream]) as send:
+            saved = self.state.generate_page_insight(self.payload)["insight"]
+        self.assertEqual(saved["freshness"]["status"], "unavailable")
+        self.assertEqual(send.call_count, 2)
+        self.assertNotIn("tools", json.loads(send.call_args.args[0].data))
 
 
 if __name__ == "__main__":

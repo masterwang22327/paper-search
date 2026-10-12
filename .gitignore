@@ -24,3 +24,10 @@ htmlcov/
 tasks/*
 !tasks/.gitkeep
 *.lock
+
+# Private backups and isolated Codex state restored from ModelScope.
+.backup-venv/
+.reader-backup/
+.reader-codex/
+reader/tests/artifacts/
+reader/reader-service.log

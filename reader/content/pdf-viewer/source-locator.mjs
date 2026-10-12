@@ -99,3 +99,26 @@ export async function locateBlocks(record, blocks) {
   }
   return changed;
 }
+
+// Exact text-layer matching only. Ignore layout whitespace, line-break hyphens
+// and common PDF ligatures, but never guess a partial/fuzzy citation match.
+export function locateCitationQuote(items, quote) {
+  const normalize = value => String(value || "").normalize("NFKC").replace(/[\s\u00ad\-‐‑]/gu, "");
+  const wanted = normalize(quote);
+  if (wanted.length < 12) return null;
+  let text = "";
+  const owners = [];
+  items.forEach((item, index) => {
+    const part = normalize(item.str);
+    text += part;
+    for (let offset = 0; offset < part.length; offset++) owners.push(index);
+  });
+  const start = text.indexOf(wanted);
+  if (start < 0 || text.indexOf(wanted, start + 1) >= 0) return null;
+  const boxes = [...new Set(owners.slice(start, start + wanted.length))].map(index => {
+    const item = items[index];
+    const height = item.height || Math.hypot(item.transform[2], item.transform[3]);
+    return [item.transform[4], item.transform[5], item.transform[4] + item.width, item.transform[5] + height];
+  }).filter(box => box.every(Number.isFinite) && box[2] > box[0] && box[3] > box[1]);
+  return boxes.length ? boxes : null;
+}
